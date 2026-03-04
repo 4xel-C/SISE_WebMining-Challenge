@@ -17,6 +17,7 @@ dependencies = [
     "pystray>=0.19.5",
     "pillow>=12.1.1",
     "pygame>=2.5.0",
+    "requests>=2.32.5",
 ]
 
 [project.scripts]
