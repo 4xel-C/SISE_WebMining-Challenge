@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>KeySentinel — Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+  <style>
+    body { background: #0d1117; color: #c9d1d9; }
+    .card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; }
+    .badge-coding  { background: #0d2a4a; color: #58a6ff; border: 1px solid #1f6feb; }
+    .badge-writing { background: #0d4a1f; color: #3fb950; border: 1px solid #238636; }
+    .badge-gaming  { background: #3d1a6e; color: #d2a8ff; border: 1px solid #8957e5; }
+    .badge-unknown { background: #21262d; color: #8b949e; border: 1px solid #30363d; }
+    .event-row:nth-child(odd) { background: rgba(255,255,255,.02); }
+    canvas { max-height: 180px; }
+  </style>
+</head>
+<body class="min-h-screen p-6 font-mono">
+
+  <!-- ── Header ───────────────────────────────────────────────────── -->
+  <header class="flex items-center justify-between mb-6">
+    <div class="flex items-center gap-3">
+      <span class="text-2xl">⌨️</span>
+      <h1 class="text-xl font-bold text-blue-400">KeySentinel</h1>
+    </div>
+    <div class="flex items-center gap-4 text-sm text-gray-500">
+      <span id="session-user">— utilisateur</span>
+      <span id="session-activity-label" class="px-3 py-1 rounded-full text-xs font-bold badge-unknown">
+        Non connecté
+      </span>
+      <span id="poll-indicator" class="w-2 h-2 rounded-full bg-gray-600"></span>
+    </div>
+  </header>
+
+  <!-- ── Prediction + Stats ────────────────────────────────────────── -->
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+
+    <!-- Prediction -->
+    <div class="card p-4 col-span-2 lg:col-span-1 flex flex-col items-center justify-center gap-2">
+      <div class="text-xs text-gray-500 uppercase tracking-widest">Activité prédite</div>
+      <div id="pred-badge"
+           class="badge-unknown px-6 py-2 rounded-full text-lg font-bold transition-all duration-500">
+        ?
+      </div>
+      <div id="pred-confidence" class="text-xs text-gray-500">— %</div>
+      <!-- confidence bar -->
+      <div class="w-full bg-gray-800 rounded-full h-1.5 mt-1">
+        <div id="pred-bar" class="h-1.5 rounded-full bg-blue-500 transition-all duration-500" style="width:0%"></div>
+      </div>
+    </div>
+
+    <!-- Stat cards -->
+    <div class="card p-4 flex flex-col items-center justify-center gap-1">
+      <div class="text-xs text-gray-500 uppercase tracking-widest">WPM</div>
+      <div id="stat-wpm" class="text-3xl font-bold text-blue-400">—</div>
+    </div>
+    <div class="card p-4 flex flex-col items-center justify-center gap-1">
+      <div class="text-xs text-gray-500 uppercase tracking-widest">Clics / s</div>
+      <div id="stat-clicks" class="text-3xl font-bold text-purple-400">—</div>
+    </div>
+    <div class="card p-4 flex flex-col items-center justify-center gap-1">
+      <div class="text-xs text-gray-500 uppercase tracking-widest">Vitesse souris</div>
+      <div id="stat-speed" class="text-3xl font-bold text-teal-400">— <span class="text-sm">px/s</span></div>
+    </div>
+
+  </div>
+
+  <!-- ── Charts ───────────────────────────────────────────────────── -->
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+
+    <div class="card p-4">
+      <div class="text-xs text-gray-500 uppercase tracking-widest mb-3">WPM (30 dernières fenêtres)</div>
+      <canvas id="chart-wpm"></canvas>
+    </div>
+
+    <div class="card p-4">
+      <div class="text-xs text-gray-500 uppercase tracking-widest mb-3">Touches / s</div>
+      <canvas id="chart-kps"></canvas>
+    </div>
+
+    <div class="card p-4">
+      <div class="text-xs text-gray-500 uppercase tracking-widest mb-3">Vitesse souris (px/s)</div>
+      <canvas id="chart-mouse"></canvas>
+    </div>
+
+  </div>
+
+  <!-- ── Proba bars (idle / working / gaming) ──────────────────────── -->
+  <div class="card p-4 mb-6">
+    <div class="text-xs text-gray-500 uppercase tracking-widest mb-4">Probabilités par classe</div>
+    <div class="flex flex-col gap-3">
+      <div>
+        <div class="flex justify-between text-xs mb-1">
+          <span class="text-gray-400">Coding</span>
+          <span id="prob-idle-val" class="text-gray-400">—</span>
+        </div>
+        <div class="bg-gray-800 rounded-full h-2">
+          <div id="prob-idle-bar" class="h-2 rounded-full bg-gray-500 transition-all duration-500" style="width:0%"></div>
+        </div>
+      </div>
+      <div>
+        <div class="flex justify-between text-xs mb-1">
+          <span class="text-green-400">Writing</span>
+          <span id="prob-working-val" class="text-gray-400">—</span>
+        </div>
+        <div class="bg-gray-800 rounded-full h-2">
+          <div id="prob-working-bar" class="h-2 rounded-full bg-green-500 transition-all duration-500" style="width:0%"></div>
+        </div>
+      </div>
+      <div>
+        <div class="flex justify-between text-xs mb-1">
+          <span class="text-purple-400">Gaming</span>
+          <span id="prob-gaming-val" class="text-gray-400">—</span>
+        </div>
+        <div class="bg-gray-800 rounded-full h-2">
+          <div id="prob-gaming-bar" class="h-2 rounded-full bg-purple-500 transition-all duration-500" style="width:0%"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Raw event feed ───────────────────────────────────────────── -->
+  <div class="card p-4">
+    <div class="flex items-center justify-between mb-3">
+      <div class="text-xs text-gray-500 uppercase tracking-widest">Flux d'événements bruts</div>
+      <button onclick="clearFeed()"
+              class="text-xs text-gray-600 hover:text-gray-400 transition-colors">
+        Vider
+      </button>
+    </div>
+    <div id="event-feed"
+         class="text-xs h-48 overflow-y-auto flex flex-col-reverse gap-0.5 pr-1">
+      <div class="text-gray-600 italic">En attente d'événements…</div>
+    </div>
+  </div>
+
+  <!-- ── JS ───────────────────────────────────────────────────────── -->
+  <script>
+    // ----------------------------------------------------------------
+    // Config
+    // ----------------------------------------------------------------
+    const POLL_INTERVAL_MS   = 2000;
+    const CHART_MAX_POINTS   = 30;
+    const FEED_MAX_ROWS      = 80;
+
+    let _lastEventTs = 0;   // timestamp du dernier événement reçu (évite les doublons)
+
+    const ACTIVITY_CLASSES = {
+      coding:  { label: 'CODING',  css: 'badge-coding' },
+      writing: { label: 'WRITING', css: 'badge-writing' },
+      gaming:  { label: 'GAMING',  css: 'badge-gaming' },
+    };
+
+    // ----------------------------------------------------------------
+    // Chart factory
+    // ----------------------------------------------------------------
+    function makeChart(id, color, label) {
+      const ctx = document.getElementById(id).getContext('2d');
+      return new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: [],
+          datasets: [{
+            label,
+            data: [],
+            borderColor: color,
+            backgroundColor: color + '22',
+            borderWidth: 2,
+            pointRadius: 2,
+            tension: 0.4,
+            fill: true,
+          }]
+        },
+        options: {
+          animation: false,
+          responsive: true,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { display: false },
+            y: {
+              grid: { color: '#21262d' },
+              ticks: { color: '#8b949e', font: { size: 10 } },
+              min: 0,
+            }
+          }
+        }
+      });
+    }
+
+    const charts = {
+      wpm:   makeChart('chart-wpm',   '#58a6ff', 'WPM'),
+      kps:   makeChart('chart-kps',   '#d2a8ff', 'Touches/s'),
+      mouse: makeChart('chart-mouse', '#2dd4bf', 'Vitesse souris'),
+    };
+
+    function pushPoint(chart, value) {
+      const now = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      chart.data.labels.push(now);
+      chart.data.datasets[0].data.push(value ?? null);
+      if (chart.data.labels.length > CHART_MAX_POINTS) {
+        chart.data.labels.shift();
+        chart.data.datasets[0].data.shift();
+      }
+      chart.update('none');
+    }
+
+    // ----------------------------------------------------------------
+    // Prediction update
+    // ----------------------------------------------------------------
+    function updatePrediction(data) {
+      const activity = (data.activity || 'unknown').toLowerCase();
+      const conf     = Math.round((data.confidence || 0) * 100);
+      const probs    = data.probabilities || { idle: 0, working: 0, gaming: 0 };
+
+      // Badge
+      const badge = document.getElementById('pred-badge');
+      badge.className = 'px-6 py-2 rounded-full text-lg font-bold transition-all duration-500 ';
+      const cls = ACTIVITY_CLASSES[activity];
+      badge.className += cls ? cls.css : 'badge-unknown';
+      badge.textContent = cls ? cls.label : '?';
+
+      document.getElementById('pred-confidence').textContent = cls ? `${conf} %` : '— %';
+      document.getElementById('pred-bar').style.width = `${conf}%`;
+
+      // Proba bars
+      for (const act of ['coding', 'writing', 'gaming']) {
+        const pct = Math.round((probs[act] || 0) * 100);
+        document.getElementById(`prob-${act}-val`).textContent = `${pct} %`;
+        document.getElementById(`prob-${act}-bar`).style.width  = `${pct}%`;
+      }
+    }
+
+    // ----------------------------------------------------------------
+    // Raw event feed
+    // ----------------------------------------------------------------
+    const DEVICE_ICONS = { keyboard: '⌨️', mouse: '🖱️' };
+    const EVENT_COLORS = {
+      press:   'text-blue-400',
+      release: 'text-gray-500',
+      move:    'text-gray-600',
+      click:   'text-purple-400',
+      scroll:  'text-teal-400',
+    };
+
+    function appendEvents(events) {
+      const feed = document.getElementById('event-feed');
+
+      // Remove placeholder
+      const placeholder = feed.querySelector('.italic');
+      if (placeholder) placeholder.remove();
+
+      for (const ev of events) {
+        const div = document.createElement('div');
+        const color = EVENT_COLORS[ev.event_type] || 'text-gray-400';
+        const icon  = DEVICE_ICONS[ev.device] || '📡';
+        div.className = `event-row flex gap-2 py-0.5 px-1 rounded ${color}`;
+        div.innerHTML =
+          `<span class="text-gray-600 w-20 shrink-0">${ev.time || ''}</span>` +
+          `<span class="w-4">${icon}</span>` +
+          `<span class="w-16 shrink-0">${ev.event_type || ''}</span>` +
+          `<span class="text-gray-400">${ev.detail || ''}</span>`;
+        feed.prepend(div);
+      }
+
+      // Limit rows
+      while (feed.children.length > FEED_MAX_ROWS) feed.lastChild.remove();
+    }
+
+    function clearFeed() {
+      document.getElementById('event-feed').innerHTML =
+        '<div class="text-gray-600 italic">En attente d\'événements…</div>';
+    }
+
+    // ----------------------------------------------------------------
+    // Status bar
+    // ----------------------------------------------------------------
+    function updateStatus(data) {
+      document.getElementById('session-user').textContent =
+        data.user ? `👤 ${data.user}` : '— utilisateur';
+      const lbl = document.getElementById('session-activity-label');
+      if (data.activity) {
+        const cls = ACTIVITY_CLASSES[data.activity.toLowerCase()];
+        lbl.className = `px-3 py-1 rounded-full text-xs font-bold ${cls ? cls.css : 'badge-unknown'}`;
+        lbl.textContent = data.active ? '🔴 En cours' : '⏹ Arrêtée';
+      } else {
+        lbl.className = 'px-3 py-1 rounded-full text-xs font-bold badge-unknown';
+        lbl.textContent = 'Non connecté';
+      }
+    }
+
+    // ----------------------------------------------------------------
+    // Poll indicator blink
+    // ----------------------------------------------------------------
+    function blink(ok) {
+      const el = document.getElementById('poll-indicator');
+      el.className = `w-2 h-2 rounded-full ${ok ? 'bg-green-500' : 'bg-red-500'}`;
+      setTimeout(() => { el.className = 'w-2 h-2 rounded-full bg-gray-600'; }, 400);
+    }
+
+    // ----------------------------------------------------------------
+    // API calls  (routes implemented in dashboard.py)
+    // ----------------------------------------------------------------
+
+    async function fetchStatus() {
+      // #todo  GET /api/status
+      // Expected: { user, activity, active: bool }
+      const r = await fetch('/api/status');
+      if (!r.ok) return;
+      updateStatus(await r.json());
+    }
+
+    async function fetchFeatures() {
+      // #todo  GET /api/features/live
+      // Expected: { wpm, keys_per_sec, mouse_speed, click_rate, gaming_key_ratio, mean_dwell }
+      const r = await fetch('/api/features/live');
+      if (!r.ok) return;
+      const d = await r.json();
+      document.getElementById('stat-wpm').textContent    = d.wpm           != null ? Math.round(d.wpm)           : '—';
+      document.getElementById('stat-clicks').textContent = d.click_rate    != null ? d.click_rate.toFixed(2)     : '—';
+      document.getElementById('stat-speed').innerHTML    = d.mouse_speed   != null
+        ? `${Math.round(d.mouse_speed)} <span class="text-sm">px/s</span>` : '—';
+      pushPoint(charts.wpm,   d.wpm);
+      pushPoint(charts.kps,   d.keys_per_sec);
+      pushPoint(charts.mouse, d.mouse_speed);
+    }
+
+    async function fetchPrediction() {
+      // #todo  GET /api/predict/live
+      // Expected: { activity, confidence, probabilities: { coding, writing, gaming } }
+      const r = await fetch('/api/predict/live');
+      if (!r.ok) return;
+      updatePrediction(await r.json());
+    }
+
+    async function fetchRecentEvents() {
+      const r = await fetch(`/api/events/recent?n=50&since=${_lastEventTs}`);
+      if (!r.ok) return;
+      const events = await r.json();
+      if (!events.length) return;
+      // Met à jour le curseur (événement le plus récent = premier dans la liste)
+      _lastEventTs = Math.max(_lastEventTs, ...events.map(e => e.ts || 0));
+      appendEvents(events);
+    }
+
+    // ----------------------------------------------------------------
+    // Polling loop
+    // ----------------------------------------------------------------
+    async function poll() {
+      try {
+        await Promise.allSettled([
+          fetchStatus(),
+          fetchFeatures(),
+          fetchPrediction(),
+          fetchRecentEvents(),
+        ]);
+        blink(true);
+      } catch {
+        blink(false);
+      }
+    }
+
+    poll();
+    setInterval(poll, POLL_INTERVAL_MS);
+  </script>
+</body>
+</html>
