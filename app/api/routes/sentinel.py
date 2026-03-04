@@ -254,3 +254,106 @@ def sentinel_session_stats(session_id: int):
         return jsonify(payload)
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
+
+
+# ---------------------------------------------------------------------------
+# Session events (for animated replay)
+# ---------------------------------------------------------------------------
+
+
+@sentinel_bp.get("/api/sentinel/session/<int:session_id>/events")
+def sentinel_session_events(session_id: int):
+    """
+    Returns all keyboard (press + release) and mouse (move + click) events
+    for client-side animated replay.
+
+    Each keyboard event: { ts_offset, type, key }
+    Each mouse event:    { ts_offset, type, x, y, button }
+    ts_offset = seconds elapsed since session started_at.
+
+    Query param:
+        move_limit  (default 3000, max 8000) — move events are subsampled
+                                               when the recording has more.
+    """
+    move_limit = min(request.args.get("move_limit", 3000, type=int), 8_000)
+    try:
+        with get_session() as db:
+            s = db.get(RecordingSession, session_id)
+            if s is None:
+                return jsonify({"error": "session not found"}), 404
+
+            activity_label = s.activity.label.value if s.activity else None
+            t0 = s.started_at or 0.0
+            duration = (s.ending_at - t0) if s.ending_at else None
+
+            # All keyboard events (press + release)
+            kb_rows = (
+                db.query(KeyboardEvent)
+                .filter(KeyboardEvent.recording_session_id == session_id)
+                .order_by(KeyboardEvent.timestamp)
+                .all()
+            )
+
+            # Clicks — kept in full (usually few)
+            click_rows = (
+                db.query(MouseEvent)
+                .filter(
+                    MouseEvent.recording_session_id == session_id,
+                    MouseEvent.event_type == "click",
+                )
+                .order_by(MouseEvent.timestamp)
+                .all()
+            )
+
+            # Move events — subsampled when too many
+            all_moves = (
+                db.query(MouseEvent)
+                .filter(
+                    MouseEvent.recording_session_id == session_id,
+                    MouseEvent.event_type == "move",
+                )
+                .order_by(MouseEvent.timestamp)
+                .all()
+            )
+            total_moves = len(all_moves)
+            step = max(1, total_moves // move_limit) if total_moves > move_limit else 1
+            move_rows = all_moves[::step]
+
+            keyboard = [
+                {"ts_offset": e.timestamp - t0, "type": e.event_type, "key": e.key}
+                for e in kb_rows
+            ]
+            mouse = sorted(
+                [
+                    {
+                        "ts_offset": e.timestamp - t0,
+                        "type": "move",
+                        "x": e.x,
+                        "y": e.y,
+                        "button": None,
+                    }
+                    for e in move_rows
+                ]
+                + [
+                    {
+                        "ts_offset": e.timestamp - t0,
+                        "type": "click",
+                        "x": e.x,
+                        "y": e.y,
+                        "button": e.button,
+                    }
+                    for e in click_rows
+                ],
+                key=lambda e: e["ts_offset"],
+            )
+
+            payload = {
+                "activity": activity_label,
+                "duration": duration,
+                "keyboard": keyboard,
+                "mouse": mouse,
+            }
+
+        return jsonify(payload)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
