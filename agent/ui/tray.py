@@ -20,6 +20,7 @@ from .home import ask_profile
 # ── Constants ─────────────────────────────────────────────────────────────────
 ACTIVITIES = ("coding", "writing", "gaming")
 DASHBOARD_URL = "http://127.0.0.1:5000"
+SENTINEL_URL = "http://127.0.0.1:5000/sentinel"
 ICON_SIZE = 64
 COLOR_IDLE = "#6e7681"  # github grey
 COLOR_REC = "#f85149"  # github red
@@ -240,7 +241,8 @@ class TrayApp:
         threading.Thread(target=self._do_stop, daemon=True).start()
 
     def _open_dashboard(self, icon, item) -> None:
-        webbrowser.open(DASHBOARD_URL)
+        url = SENTINEL_URL if self._mode == "sentinel" else DASHBOARD_URL
+        webbrowser.open(url)
 
     def _notify(self, title: str, message: str) -> None:
         if self._icon:
