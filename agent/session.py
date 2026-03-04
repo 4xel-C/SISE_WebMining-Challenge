@@ -14,8 +14,12 @@ def get_id() -> int | None:
     return _session_id
 
 
-def start(user: str, activity: str, post_fn: Callable) -> int | None:
-    """Open a new session on the server; store and return the session_id."""
+def start(user: str, activity: str | None, post_fn: Callable) -> int | None:
+    """Open a new session on the server; store and return the session_id.
+
+    activity=None  →  mode ML-only, le serveur recevra activity=null et
+                       le modèle annotera les événements en différé.
+    """
     global _session_id
     resp = post_fn("/api/session/start", {"user": user, "activity": activity})
     _session_id = (resp or {}).get("session_id")

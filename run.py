@@ -57,17 +57,16 @@ def main() -> None:
 
     def _quit_with_cleanup(self, icon, item) -> None:
         """Arrêter Flask après la fermeture du tray."""
-        original_quit(self, icon, item)  # stop pystray + recording
-        flask_proc.terminate()
+        original_quit(self, icon, item)  # appelle déjà exit_hook
 
     TrayApp._quit = _quit_with_cleanup
 
-    TrayApp().run()
-
-    # ── 3) Nettoyage final ───────────────────────────────────────────────────
-    if flask_proc.poll() is None:
-        flask_proc.terminate()
-    flask_proc.wait()
+    try:
+        TrayApp(exit_hook=flask_proc.terminate).run()
+    finally:
+        if flask_proc.poll() is None:
+            flask_proc.terminate()
+        flask_proc.wait()
 
 
 if __name__ == "__main__":

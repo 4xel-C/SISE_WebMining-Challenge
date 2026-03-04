@@ -7,15 +7,15 @@ State machine
   RECORDING red  circle  menu: [👤 user (disabled)]     [🔴 activity] [───] [⏹ Arrêter]  [───] [🌐 Dashboard] [Quitter]
 """
 
+import signal
 import threading
 import webbrowser
-import tkinter as tk
-from tkinter import simpledialog
 
 import pystray
 from PIL import Image, ImageDraw
 
 from .. import buffer, client, listeners, session
+from .home import ask_profile
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 ACTIVITIES = ("coding", "writing", "gaming")
@@ -23,19 +23,27 @@ DASHBOARD_URL = "http://127.0.0.1:5000"
 ICON_SIZE = 64
 COLOR_IDLE = "#6e7681"  # github grey
 COLOR_REC = "#f85149"  # github red
+COLOR_SENTINEL = "#bc8cff"  # purple (sentinel mode)
 COLOR_SERVER = "#3fb950"  # github green  (server OK dot)
 
 
 # ── Icon helpers ──────────────────────────────────────────────────────────────
 
 
-def _make_image(recording: bool, server_ok: bool = True) -> Image.Image:
+def _make_image(
+    recording: bool, server_ok: bool = True, sentinel: bool = False
+) -> Image.Image:
     """64×64 RGBA: filled circle + tiny status dot in the corner."""
     img = Image.new("RGBA", (ICON_SIZE, ICON_SIZE), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
     # Main circle
-    fill = COLOR_REC if recording else COLOR_IDLE
+    if sentinel:
+        fill = COLOR_SENTINEL
+    elif recording:
+        fill = COLOR_REC
+    else:
+        fill = COLOR_IDLE
     draw.ellipse([4, 4, ICON_SIZE - 4, ICON_SIZE - 4], fill=fill)
 
     # Small server-status dot (bottom-right)
@@ -52,9 +60,15 @@ def _make_image(recording: bool, server_ok: bool = True) -> Image.Image:
 
 
 class TrayApp:
-    def __init__(self) -> None:
+    def __init__(self, exit_hook=None) -> None:
+        """
+        exit_hook : callable appelé juste avant os._exit (ex: flask_proc.terminate).
+        """
+        self._exit_hook = exit_hook
         self._user = "anonymous"
         self._activity = ACTIVITIES[0]
+        self._labelled = True
+        self._mode = "base"  # "base" | "sentinel"
         self._recording = False
         self._server_ok = False
 
@@ -67,6 +81,19 @@ class TrayApp:
     # ── Menu ──────────────────────────────────────────────────────────────────
 
     def _make_menu(self) -> pystray.Menu:
+        if self._mode == "sentinel":
+            server_label = (
+                "✅  Serveur OK" if self._server_ok else "❌  Serveur inaccessible"
+            )
+            return pystray.Menu(
+                pystray.MenuItem("🟣  Mode Sentinel", self._ask_user),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem(server_label, None, enabled=False),
+                pystray.MenuItem("🌐  Ouvrir l'interface web", self._open_dashboard),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem("Quitter", self._quit),
+            )
+
         if self._recording:
             return pystray.Menu(
                 pystray.MenuItem(f"👤  {self._user}", None, enabled=False),
@@ -78,17 +105,25 @@ class TrayApp:
                 pystray.MenuItem("Quitter", self._quit),
             )
 
-        activity_submenu = pystray.Menu(
-            *[
-                pystray.MenuItem(
-                    a,
-                    self._activity_setter(a),
-                    checked=lambda item, a=a: self._activity == a,
-                    radio=True,
-                )
-                for a in ACTIVITIES
-            ]
-        )
+        if self._labelled:
+            activity_item = pystray.MenuItem(
+                "Activité",
+                pystray.Menu(
+                    *[
+                        pystray.MenuItem(
+                            a,
+                            self._activity_setter(a),
+                            checked=lambda item, a=a: self._activity == a,
+                            radio=True,
+                        )
+                        for a in ACTIVITIES
+                    ]
+                ),
+            )
+        else:
+            activity_item = pystray.MenuItem(
+                "Activité : Auto (ML)", None, enabled=False
+            )
 
         server_label = (
             "✅  Serveur OK" if self._server_ok else "❌  Serveur inaccessible"
@@ -96,7 +131,7 @@ class TrayApp:
 
         return pystray.Menu(
             pystray.MenuItem(f"👤  {self._user}", self._ask_user),
-            pystray.MenuItem("Activité", activity_submenu),
+            activity_item,
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("▶  Démarrer", self._on_start, enabled=self._server_ok),
             pystray.Menu.SEPARATOR,
@@ -108,7 +143,11 @@ class TrayApp:
     def _refresh(self) -> None:
         """Rebuild icon image + menu in place (thread-safe via pystray)."""
         if self._icon:
-            self._icon.icon = _make_image(self._recording, self._server_ok)
+            self._icon.icon = _make_image(
+                self._recording,
+                self._server_ok,
+                sentinel=self._mode == "sentinel",
+            )
             self._icon.menu = self._make_menu()
 
     # ── Actions ───────────────────────────────────────────────────────────────
@@ -123,21 +162,20 @@ class TrayApp:
         return _set
 
     def _ask_user(self, icon, item) -> None:
-        """Open a minimal tkinter dialog to change the username."""
+        """Open the home window to change mode / user / activity / labelling."""
 
         def _dialog() -> None:
-            root = tk.Tk()
-            root.withdraw()
-            root.attributes("-topmost", True)
-            name = simpledialog.askstring(
-                "KeySentinel — Utilisateur",
-                "Nom d'utilisateur :",
-                initialvalue=self._user,
-                parent=root,
+            result = ask_profile(
+                initial_user=self._user,
+                initial_activity=self._activity,
+                initial_labelled=self._labelled,
+                initial_mode=self._mode,
             )
-            root.destroy()
-            if name and name.strip():
-                self._user = name.strip()
+            if result:
+                self._mode = result["mode"]
+                self._user = result["user"] or "anonymous"
+                self._labelled = result["labelled"]
+                self._activity = result["activity"] or ACTIVITIES[0]
                 self._refresh()
 
         threading.Thread(target=_dialog, daemon=True).start()
@@ -156,8 +194,9 @@ class TrayApp:
         self._stop_event = threading.Event()
         self._refresh()
 
-        # Open session
-        session.start(self._user, self._activity, client.post)
+        # Open session (activity=None when ML-only mode)
+        _activity = self._activity if self._labelled else None
+        session.start(self._user, _activity, client.post)
 
         # Flush thread
         threading.Thread(
@@ -212,6 +251,8 @@ class TrayApp:
 
     def _quit(self, icon, item) -> None:
         self._do_stop()
+        if self._exit_hook:
+            self._exit_hook()
         icon.stop()
 
     # ── Server polling ────────────────────────────────────────────────────────
@@ -232,14 +273,37 @@ class TrayApp:
     # ── Run ───────────────────────────────────────────────────────────────────
 
     def run(self) -> None:
+        # ── Fenêtre de login au démarrage ─────────────────────────────────
+        result = ask_profile(
+            initial_user=self._user,
+            initial_activity=self._activity,
+            initial_labelled=self._labelled,
+            initial_mode=self._mode,
+        )
+        if result is None:
+            return  # utilisateur a annulé → on ne démarre pas
+        self._mode = result["mode"]
+        self._user = result["user"] or "anonymous"
+        self._labelled = result["labelled"]
+        self._activity = result["activity"] or ACTIVITIES[0]
+
+        # ── Tray ──────────────────────────────────────────────────────────
         self._server_ok = client.check_server()
 
         self._icon = pystray.Icon(
             name="KeySentinel",
-            icon=_make_image(recording=False, server_ok=self._server_ok),
+            icon=_make_image(
+                recording=False,
+                server_ok=self._server_ok,
+                sentinel=self._mode == "sentinel",
+            ),
             title="KeySentinel",
             menu=self._make_menu(),
         )
 
         threading.Thread(target=self._poll_server, daemon=True).start()
+
+        # Ctrl+C dans le terminal est ignoré — utiliser le menu tray pour quitter.
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+
         self._icon.run()  # blocks the main thread (required by pystray on Windows)
