@@ -4,6 +4,7 @@ import queue
 import threading
 import time
 import uuid
+from typing import Literal
 
 from app.collector.keyboard_listener import KeyboardListener
 from app.collector.mouse_listener import MouseListener
@@ -11,6 +12,7 @@ from app.models.schema import (
     Activity,
     KeyboardEvent,
     MouseEvent,
+    RecordingSession,
     User,
     create_tables,
     get_session,
@@ -22,7 +24,7 @@ class RegisterService:
     Enregistre les événements clavier et souris en base de données.
 
     Usage:
-        service = RegisterService(username="axel", activity_label="gaming")
+        service = RegisterService(username="axel", activity_label=ActivityCategory.gaming)
         service.start()
         time.sleep(30)
         service.stop()
@@ -31,7 +33,7 @@ class RegisterService:
     def __init__(
         self,
         username: str,
-        activity_label: str,
+        activity_label: Literal["coding", "writing", "gaming", "train"],
         db_url: str = "sqlite:///keysentinel.db",
         session_id: str | None = None,
     ):
@@ -46,19 +48,17 @@ class RegisterService:
         self._running = False
         self._flush_thread: threading.Thread | None = None
 
-        # IDs résolus au démarrage
-        self._user_id: int | None = None
-        self._activity_id: int | None = None
+        self._recording_session_id: int | None = None
 
-    def _resolve_user_and_activity(self):
-        """Crée ou récupère l'utilisateur et le label d'activité en base."""
+    def _init_session(self):
+        """Crée ou récupère l'utilisateur, l'activité, et crée la RecordingSession."""
         with get_session(self.db_url) as session:
             user = session.query(User).filter_by(name=self.username).first()
             if user is None:
                 user = User(name=self.username)
                 session.add(user)
                 session.flush()
-            self._user_id = user.id
+            user_id = user.id
 
             activity = (
                 session.query(Activity).filter_by(label=self.activity_label).first()
@@ -67,7 +67,17 @@ class RegisterService:
                 activity = Activity(label=self.activity_label)
                 session.add(activity)
                 session.flush()
-            self._activity_id = activity.id
+            activity_id = activity.id
+
+            recording_session = RecordingSession(
+                uuid=self.session_id,
+                user_id=user_id,
+                activity_id=activity_id,
+                started_at=time.time(),
+            )
+            session.add(recording_session)
+            session.flush()
+            self._recording_session_id = recording_session.id
 
     def _flush_loop(self):
         """Vide la queue et écrit les événements en base toutes les secondes."""
@@ -96,9 +106,7 @@ class RegisterService:
             if etype in ("key_press", "key_release"):
                 keyboard_rows.append(
                     KeyboardEvent(
-                        session=self.session_id,
-                        user_id=self._user_id,
-                        activity_id=self._activity_id,
+                        recording_session_id=self._recording_session_id,
                         event_type=etype,
                         key=e["key"],
                         timestamp=e["time"],
@@ -109,9 +117,7 @@ class RegisterService:
             elif etype in ("click", "move", "scroll"):
                 mouse_rows.append(
                     MouseEvent(
-                        session=self.session_id,
-                        user_id=self._user_id,
-                        activity_id=self._activity_id,
+                        recording_session_id=self._recording_session_id,
                         event_type=etype,
                         x=e["x"],
                         y=e["y"],
@@ -129,12 +135,21 @@ class RegisterService:
     def start(self):
         """Démarre les listeners et le thread de flush."""
         create_tables(self.db_url)
-        self._resolve_user_and_activity()
+        self._init_session()
         self._keyboard.start()
         self._mouse.start()
         self._running = True
         self._flush_thread = threading.Thread(target=self._flush_loop, daemon=True)
         self._flush_thread.start()
+
+    def _close_session(self):
+        """Renseigne ending_at sur la RecordingSession en base."""
+        if self._recording_session_id is None:
+            return
+        with get_session(self.db_url) as session:
+            rec = session.get(RecordingSession, self._recording_session_id)
+            if rec is not None:
+                rec.ending_at = time.time()
 
     def stop(self):
         """Arrête les listeners et attend le flush final."""
@@ -143,3 +158,4 @@ class RegisterService:
         self._running = False
         if self._flush_thread:
             self._flush_thread.join(timeout=5)
+        self._close_session()

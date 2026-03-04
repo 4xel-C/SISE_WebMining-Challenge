@@ -12,6 +12,7 @@ dependencies = [
     "textual>=0.68.0",
     "click>=8.1.7",
     "sqlalchemy>=2.0.0",
+    "pygame>=2.6.1",
 ]
 
 [project.scripts]

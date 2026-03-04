@@ -1,10 +1,12 @@
 """SQLAlchemy ORM schema for the SISE Monitor application."""
 
+import enum
+import time
 from contextlib import contextmanager
 from typing import Generator
 
 from sqlalchemy import (
-    BigInteger,
+    Enum,
     Float,
     ForeignKey,
     Integer,
@@ -12,6 +14,13 @@ from sqlalchemy import (
     create_engine,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship
+
+
+class ActivityCategory(enum.Enum):
+    coding = "coding"
+    writing = "writing"
+    gaming = "gaming"
+    train = "train"
 
 
 class Base(DeclarativeBase):
@@ -31,10 +40,13 @@ class User(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
 
-    keyboard_events: Mapped[list["KeyboardEvent"]] = relationship(
-        back_populates="user", cascade="all, delete-orphan"
+    # Update if the user is online or not (for real-time monitoring)
+    is_on_line: Mapped[bool] = mapped_column(default=False)
+    on_going_activity: Mapped[ActivityCategory | None] = mapped_column(
+        Enum(ActivityCategory), nullable=True
     )
-    mouse_events: Mapped[list["MouseEvent"]] = relationship(
+
+    sessions: Mapped[list["RecordingSession"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
 
@@ -45,25 +57,68 @@ class User(Base):
 # ---------------------------------------------------------------------------
 # Activity
 # ---------------------------------------------------------------------------
-
-
 class Activity(Base):
     """Activity label used to tag training sessions (e.g. 'work', 'gaming')."""
 
     __tablename__ = "activities"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    label: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
-
-    keyboard_events: Mapped[list["KeyboardEvent"]] = relationship(
-        back_populates="activity", cascade="all, delete-orphan"
+    label: Mapped[ActivityCategory] = mapped_column(
+        Enum(ActivityCategory), nullable=False, unique=True
     )
-    mouse_events: Mapped[list["MouseEvent"]] = relationship(
+
+    sessions: Mapped[list["RecordingSession"]] = relationship(
         back_populates="activity", cascade="all, delete-orphan"
     )
 
     def __repr__(self) -> str:
         return f"Activity(id={self.id}, label={self.label!r})"
+
+
+# ---------------------------------------------------------------------------
+# Recording Session
+# ---------------------------------------------------------------------------
+
+
+class RecordingSession(Base):
+    """Central session record linking a user, an activity, and all its events."""
+
+    __tablename__ = "recording_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    uuid: Mapped[str] = mapped_column(
+        String(64), nullable=False, unique=True, index=True
+    )
+
+    user_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    activity_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("activities.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    started_at: Mapped[float] = mapped_column(Float, nullable=False, default=time.time)
+    ending_at: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    # Time spent (in minutes) per activity category during this session
+    coding_time: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    writing_time: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    gaming_time: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+
+    user: Mapped["User | None"] = relationship(back_populates="sessions")
+    activity: Mapped["Activity | None"] = relationship(back_populates="sessions")
+
+    keyboard_events: Mapped[list["KeyboardEvent"]] = relationship(
+        back_populates="recording_session", cascade="all, delete-orphan"
+    )
+    mouse_events: Mapped[list["MouseEvent"]] = relationship(
+        back_populates="recording_session", cascade="all, delete-orphan"
+    )
+
+    def __repr__(self) -> str:
+        return f"RecordingSession(id={self.id}, uuid={self.uuid!r})"
 
 
 # ---------------------------------------------------------------------------
@@ -82,25 +137,17 @@ class KeyboardEvent(Base):
 
     __tablename__ = "keyboard_events"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
 
-    # Recording session identifier (e.g. UUID or ISO timestamp string)
-    session: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
-
-    # FK to the user who generated this event (nullable → unknown user)
-    user_id: Mapped[int | None] = mapped_column(
-        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
-    )
-    user: Mapped["User | None"] = relationship(back_populates="keyboard_events")
-
-    # FK to the activity label for training data annotation
-    activity_id: Mapped[int | None] = mapped_column(
+    recording_session_id: Mapped[int] = mapped_column(
         Integer,
-        ForeignKey("activities.id", ondelete="SET NULL"),
-        nullable=True,
+        ForeignKey("recording_sessions.id", ondelete="CASCADE"),
+        nullable=False,
         index=True,
     )
-    activity: Mapped["Activity | None"] = relationship(back_populates="keyboard_events")
+    recording_session: Mapped["RecordingSession"] = relationship(
+        back_populates="keyboard_events"
+    )
 
     # "key_press" or "key_release"
     event_type: Mapped[str] = mapped_column(String(16), nullable=False)
@@ -116,7 +163,7 @@ class KeyboardEvent(Base):
 
     def __repr__(self) -> str:
         return (
-            f"KeyboardEvent(id={self.id}, session={self.session!r}, "
+            f"KeyboardEvent(id={self.id}, session_id={self.recording_session_id}, "
             f"type={self.event_type!r}, key={self.key!r})"
         )
 
@@ -138,25 +185,17 @@ class MouseEvent(Base):
 
     __tablename__ = "mouse_events"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
 
-    # Recording session identifier
-    session: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
-
-    # FK to the user who generated this event (nullable → unknown user)
-    user_id: Mapped[int | None] = mapped_column(
-        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
-    )
-    user: Mapped["User | None"] = relationship(back_populates="mouse_events")
-
-    # FK to the activity label for training data annotation
-    activity_id: Mapped[int | None] = mapped_column(
+    recording_session_id: Mapped[int] = mapped_column(
         Integer,
-        ForeignKey("activities.id", ondelete="SET NULL"),
-        nullable=True,
+        ForeignKey("recording_sessions.id", ondelete="CASCADE"),
+        nullable=False,
         index=True,
     )
-    activity: Mapped["Activity | None"] = relationship(back_populates="mouse_events")
+    recording_session: Mapped["RecordingSession"] = relationship(
+        back_populates="mouse_events"
+    )
 
     # "click", "move", or "scroll"
     event_type: Mapped[str] = mapped_column(String(16), nullable=False)
@@ -176,7 +215,7 @@ class MouseEvent(Base):
 
     def __repr__(self) -> str:
         return (
-            f"MouseEvent(id={self.id}, session={self.session!r}, "
+            f"MouseEvent(id={self.id}, session_id={self.recording_session_id}, "
             f"type={self.event_type!r}, x={self.x}, y={self.y})"
         )
 
