@@ -1,7 +1,25 @@
 [project]
 name = "sise-webmining-challenge"
 version = "0.1.0"
-description = "Add your description here"
+description = "CLI Input Monitoring Application"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "pynput>=1.7.7",
+    "numpy>=2.0.0",
+    "scikit-learn>=1.5.0",
+    "rich>=13.7.0",
+    "textual>=0.68.0",
+    "click>=8.1.7",
+    "sqlalchemy>=2.0.0",
+]
+
+[project.scripts]
+sise-monitor = "sise_webmining_challenge.main:cli"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
