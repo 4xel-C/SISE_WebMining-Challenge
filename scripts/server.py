@@ -1,8 +1,11 @@
 """
-Starts the Flask development server.
+scripts/server.py — démarre le serveur Flask (API + frontend).
 
-Usage:
-    uv run run_server.py
+Usage direct :
+    uv run scripts/server.py
+
+Usage recommandé (tout-en-un) :
+    uv run run.py
 """
 
 from app.api import create_app
