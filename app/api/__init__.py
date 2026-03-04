@@ -9,16 +9,21 @@ Usage:
 
 from pathlib import Path
 
-from flask import Flask, send_from_directory
+from flask import Flask, render_template, send_from_directory
 
 from app.api.routes import agent, dashboard
 from app.api.routes.sentinel import sentinel_bp
 
 FRONTEND_DIR = Path(__file__).parent.parent.parent / "frontend"
+STATIC_DIR = FRONTEND_DIR / "static"
 
 
 def create_app() -> Flask:
-    app = Flask(__name__, static_folder=str(FRONTEND_DIR))
+    app = Flask(
+        __name__,
+        static_folder=str(STATIC_DIR),
+        template_folder=str(FRONTEND_DIR),
+    )
 
     # ── Blueprints ────────────────────────────────────────────────
     app.register_blueprint(dashboard)  # GET  — frontend visualisation
@@ -32,6 +37,6 @@ def create_app() -> Flask:
 
     @app.get("/sentinel")
     def sentinel():
-        return send_from_directory(FRONTEND_DIR, "sentinel.html")
+        return render_template("sentinel.html")
 
     return app
