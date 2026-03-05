@@ -41,9 +41,9 @@ def api_session_start():
     """
     body = request.get_json(silent=True) or {}
     user = body.get("user", "anonymous")
-    activity = body.get("activity", "coding")
+    activity = body.get("activity") or None
 
-    if activity not in ("coding", "writing", "gaming"):
+    if activity is not None and activity not in ("coding", "writing", "gaming"):
         return jsonify({"ok": False, "error": f"unknown activity '{activity}'"}), 400
 
     session_id = store.session_start(user=user, activity=activity)
