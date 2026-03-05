@@ -1,0 +1,166 @@
+<!-- ── Tab: Live ────────────────────────────────────────────────── -->
+<section id="tab-live" class="tab-panel hidden">
+  <div class="flex items-center justify-between mb-4">
+    <div class="flex items-center gap-3">
+      <h2 class="text-sm text-gray-500 uppercase tracking-widest">Live</h2>
+      <span id="live-session-label" class="text-xs text-green-400"></span>
+      <span id="live-activity-badge"></span>
+      <span id="live-pulse" class="hidden inline-flex items-center gap-1 text-xs text-green-400">
+        <span class="inline-block w-2 h-2 rounded-full bg-green-400 animate-pulse"></span>En cours
+      </span>
+      <span id="live-ended-badge" class="hidden text-xs text-gray-500">Session terminée</span>
+    </div>
+    <div class="flex items-center gap-2 text-xs text-gray-600">
+      <span id="live-event-count">0 événements</span>
+      <button onclick="stopLive()" class="hover:text-red-400 transition-colors">⏹ Arrêter</button>
+    </div>
+  </div>
+
+  <div id="live-stopped" class="text-gray-600 text-sm italic">
+    Cliquer sur "Live →" dans l'onglet Sessions pour démarrer le suivi en direct.
+  </div>
+
+  <div id="live-container" class="hidden">
+
+    <!-- Stats row -->
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+      <div class="card p-3 flex flex-col items-center gap-1">
+        <div class="text-xs text-gray-500 uppercase tracking-widest">Frappes</div>
+        <div id="live-stat-keys" class="text-2xl font-bold text-blue-400">0</div>
+      </div>
+      <div class="card p-3 flex flex-col items-center gap-1">
+        <div class="text-xs text-gray-500 uppercase tracking-widest">Clics</div>
+        <div id="live-stat-clicks" class="text-2xl font-bold text-purple-400">0</div>
+      </div>
+      <div class="card p-3 flex flex-col items-center gap-1">
+        <div class="text-xs text-gray-500 uppercase tracking-widest">Mouvements</div>
+        <div id="live-stat-moves" class="text-2xl font-bold text-teal-400">0</div>
+      </div>
+      <div class="card p-3 flex flex-col items-center gap-1">
+        <div class="text-xs text-gray-500 uppercase tracking-widest">Durée</div>
+        <div id="live-stat-duration" class="text-2xl font-bold text-gray-300">0s</div>
+      </div>
+    </div>
+
+    <!-- Computed stats row -->
+    <div class="grid grid-cols-3 gap-3 mb-4">
+      <div class="card p-3 flex flex-col items-center justify-center gap-1">
+        <div class="text-xs text-gray-500 uppercase tracking-widest">WPM</div>
+        <div id="live-stat-wpm" class="text-2xl font-bold text-blue-400">—</div>
+      </div>
+      <div class="card p-3 flex flex-col items-center justify-center gap-1">
+        <div class="text-xs text-gray-500 uppercase tracking-widest">Touches / s</div>
+        <div id="live-stat-kps" class="text-2xl font-bold text-purple-400">—</div>
+      </div>
+      <div class="card p-3 flex flex-col items-center justify-center gap-1">
+        <div class="text-xs text-gray-500 uppercase tracking-widest">Vitesse souris</div>
+        <div id="live-stat-mouse-speed" class="text-2xl font-bold text-teal-400">— <span class="text-xs">px/s</span></div>
+      </div>
+    </div>
+
+    <!-- Charts -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+      <div class="card p-4">
+        <div class="text-xs text-gray-500 uppercase tracking-widest mb-2">WPM (fenêtre 10s)</div>
+        <canvas id="live-chart-wpm" style="max-height:120px"></canvas>
+      </div>
+      <div class="card p-4">
+        <div class="text-xs text-gray-500 uppercase tracking-widest mb-2">Touches / s</div>
+        <canvas id="live-chart-kps" style="max-height:120px"></canvas>
+      </div>
+      <div class="card p-4">
+        <div class="text-xs text-gray-500 uppercase tracking-widest mb-2">Vitesse souris (px/s)</div>
+        <canvas id="live-chart-mouse" style="max-height:120px"></canvas>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+
+      <!-- Event feed -->
+      <div class="card p-4">
+        <div class="flex items-center justify-between mb-3">
+          <div class="text-xs text-gray-500 uppercase tracking-widest">Flux d'événements</div>
+          <button onclick="clearLiveFeed()" class="text-xs text-gray-600 hover:text-gray-400 transition-colors">Vider</button>
+        </div>
+        <div id="live-feed"
+             class="text-xs h-72 overflow-y-auto flex flex-col-reverse gap-0.5 pr-1">
+          <div class="text-gray-600 italic">En attente d'événements…</div>
+        </div>
+      </div>
+
+      <!-- Keyboard heatmap -->
+      <div class="card p-4">
+        <div class="text-xs text-gray-500 uppercase tracking-widest mb-3">⌨️ Heatmap clavier</div>
+        <div id="live-kb-container" class="overflow-x-auto"></div>
+        <div class="mt-2 flex items-center gap-3 text-xs text-gray-600">
+          <span class="w-5 h-3 rounded inline-block" style="background:#21262d;border:1px solid #30363d"></span>Inactif
+          <span class="w-5 h-3 rounded inline-block ml-1" style="background:#1f3a60"></span>Faible
+          <span class="w-5 h-3 rounded inline-block" style="background:#58a6ff"></span>Élevé
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Mouse row -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+
+      <!-- Mouse heatmap canvas -->
+      <div class="lg:col-span-2 card p-4">
+        <div class="text-xs text-gray-500 uppercase tracking-widest mb-3">🖱️ Heatmap souris</div>
+        <canvas id="live-mouse-canvas" width="640" height="280"
+                style="background:#0d1117;border-radius:6px;width:100%;display:block;margin:0 auto"></canvas>
+        <div class="mt-2 flex items-center gap-4 text-xs text-gray-600 justify-center">
+          <span><span class="inline-block w-2 h-2 rounded-full mr-1" style="background:#3fb950"></span>Clic gauche</span>
+          <span><span class="inline-block w-2 h-2 rounded-full mr-1" style="background:#f85149"></span>Clic droit</span>
+          <span style="color:rgba(88,166,255,.6)">── Trajectoire</span>
+        </div>
+      </div>
+
+      <!-- Mouse button indicator -->
+      <div class="card p-4 flex flex-col gap-4">
+        <div class="text-xs text-gray-500 uppercase tracking-widest">🖱️ Boutons souris</div>
+
+        <!-- Schematic -->
+        <div class="flex flex-col items-center">
+          <!-- Upper: L + scroll + R -->
+          <div class="flex" style="width:112px">
+            <div id="live-mbtn-left"
+                 class="flex flex-col items-center justify-center gap-1 py-5 rounded-tl-3xl transition-all duration-150"
+                 style="flex:1;background:#1c2130;border:1px solid #374151;border-right:none">
+              <div class="text-xs" style="color:#6e7681">L</div>
+              <div id="live-mbtn-left-cnt" class="text-base font-bold" style="color:#c9d1d9">0</div>
+            </div>
+            <!-- Scroll -->
+            <div class="flex flex-col items-center justify-center gap-1 px-1"
+                 style="background:#12182a;border-top:1px solid #374151">
+              <div id="live-mbtn-scrollup"
+                   class="flex items-center justify-center rounded-full text-xs transition-all duration-150"
+                   style="width:22px;height:22px;background:#1c2130;border:1px solid #374151;color:#6e7681">↑</div>
+              <div id="live-mbtn-scrolldown"
+                   class="flex items-center justify-center rounded-full text-xs transition-all duration-150"
+                   style="width:22px;height:22px;background:#1c2130;border:1px solid #374151;color:#6e7681">↓</div>
+            </div>
+            <div id="live-mbtn-right"
+                 class="flex flex-col items-center justify-center gap-1 py-5 rounded-tr-3xl transition-all duration-150"
+                 style="flex:1;background:#1c2130;border:1px solid #374151;border-left:none">
+              <div class="text-xs" style="color:#6e7681">R</div>
+              <div id="live-mbtn-right-cnt" class="text-base font-bold" style="color:#c9d1d9">0</div>
+            </div>
+          </div>
+          <!-- Body -->
+          <div class="rounded-b-full" style="width:112px;height:38px;background:#1c2130;border:1px solid #374151;border-top:none"></div>
+        </div>
+
+        <div class="text-center text-xs" style="color:#6b7280">
+          <span id="live-mbtn-scrollup-cnt" style="color:#9ca3af">0</span>↑
+          &nbsp;
+          <span id="live-mbtn-scrolldown-cnt" style="color:#9ca3af">0</span>↓
+        </div>
+        <div class="text-center text-xs" style="color:#6b7280">
+          Pos: <span id="live-mouse-pos" style="color:#9ca3af">—</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>

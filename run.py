@@ -8,12 +8,15 @@ Usage:
     uv run run.py
 """
 
+import os
 import subprocess
 import sys
 import threading
 import time
 
 import requests
+
+from app.models.schema import _DB_URL
 
 FLASK_URL = "http://127.0.0.1:5000/api/status"
 BOOT_TIMEOUT = 15  # secondes max pour attendre Flask
@@ -31,10 +34,20 @@ def _wait_for_flask(timeout: float) -> bool:
     return False
 
 
+def _server_cmd() -> list[str]:
+    """Returns the command to start the Flask server.
+    When bundled with PyInstaller, uses the sibling server.exe.
+    """
+    if getattr(sys, "frozen", False):
+        base_dir = os.path.dirname(sys.executable)
+        return [os.path.join(base_dir, "server.exe")]
+    return [sys.executable, "scripts/server.py"]
+
+
 def main() -> None:
     # ── 1) Lancer Flask en subprocess ────────────────────────────────────────
     flask_proc = subprocess.Popen(
-        [sys.executable, "scripts/server.py"],
+        _server_cmd(),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )

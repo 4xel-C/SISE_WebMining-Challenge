@@ -361,3 +361,95 @@ def sentinel_session_events(session_id: int):
         return jsonify(payload)
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
+
+
+# ---------------------------------------------------------------------------
+# Live feed (ongoing session — events since a given timestamp)
+# ---------------------------------------------------------------------------
+
+
+@sentinel_bp.get("/api/sentinel/session/<int:session_id>/live")
+def sentinel_session_live(session_id: int):
+    """
+    Returns events added since `since` (epoch float, default 0).
+    Intended for polling every second on an ongoing session.
+
+    Query param:
+        since   float  — only events with timestamp > since are returned
+
+    Response shape:
+        {
+            "ongoing":  bool,
+            "since":    float,   — use this value for the next poll
+            "keyboard": [{ "ts": float, "time": "HH:MM:SS", "type": str, "key": str }],
+            "mouse":    [{ "ts": float, "type": str, "x": int, "y": int, "button": str|null }]
+        }
+    """
+    import time as _time
+
+    since = request.args.get("since", 0.0, type=float)
+    try:
+        with get_session() as db:
+            s = db.get(RecordingSession, session_id)
+            if s is None:
+                return jsonify({"error": "session not found"}), 404
+
+            ongoing = s.ending_at is None
+
+            kb_rows = (
+                db.query(KeyboardEvent)
+                .filter(
+                    KeyboardEvent.recording_session_id == session_id,
+                    KeyboardEvent.timestamp > since,
+                )
+                .order_by(KeyboardEvent.timestamp)
+                .all()
+            )
+            mouse_rows = (
+                db.query(MouseEvent)
+                .filter(
+                    MouseEvent.recording_session_id == session_id,
+                    MouseEvent.event_type.in_(["click", "move", "scroll"]),
+                    MouseEvent.timestamp > since,
+                )
+                .order_by(MouseEvent.timestamp)
+                .all()
+            )
+
+            new_since = since
+            if kb_rows:
+                new_since = max(new_since, kb_rows[-1].timestamp)
+            if mouse_rows:
+                new_since = max(new_since, mouse_rows[-1].timestamp)
+
+            keyboard = [
+                {
+                    "ts": e.timestamp,
+                    "time": _time.strftime("%H:%M:%S", _time.localtime(e.timestamp)),
+                    "type": e.event_type,
+                    "key": e.key,
+                }
+                for e in kb_rows
+            ]
+            mouse = [
+                {
+                    "ts": e.timestamp,
+                    "type": e.event_type,
+                    "x": e.x,
+                    "y": e.y,
+                    "button": e.button,
+                    "scroll_dy": e.scroll_dy,
+                }
+                for e in mouse_rows
+            ]
+
+        return jsonify(
+            {
+                "ongoing": ongoing,
+                "since": new_since,
+                "keyboard": keyboard,
+                "mouse": mouse,
+            }
+        )
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500

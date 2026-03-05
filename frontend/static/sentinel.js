@@ -1,17 +1,41 @@
 // ── KeySentinel — Sentinel mode JS ──────────────────────────────────
 
 // ── State ──────────────────────────────────────────────────────────
-let _selectedUserId   = null;
+ let _selectedUserId   = null;
 let _selectedUserName = null;
 let _selectedSessionId = null;
 let _replayLoadedFor  = null;
+let _liveSessionId    = null;  // session currently watched live
+let _liveSince        = 0;     // timestamp cursor for incremental fetch
+let _liveTimer        = null;  // setInterval handle
+let _liveKbCounts      = {};   // key heatmap for live tab
+let _liveRecentPresses = [];  // {ts} for sliding-window WPM/KPS
+let _liveRecentMoves   = [];  // {ts, x, y} for mouse speed
+let _liveCharts        = null;
+let _liveMouseTrajPts  = [];   // {x,y} capped at 1500 for canvas drawing
+let _liveMouseClicks   = [];   // all {x,y,button} for session
+let _liveMousePos      = null;
+let _liveMouseBbox     = null; // {minX,maxX,minY,maxY} expanded dynamically
+let _liveMBtnCounts    = { left: 0, right: 0, scrollup: 0, scrolldown: 0 };
+let _liveMBtnTimers    = {};
+let _liveKbLastPress  = {};    // Date.now() of most recent press per key
+let _liveTotalKeys    = 0;
+let _liveTotalClicks  = 0;
+let _liveTotalMoves   = 0;
+let _liveStartedAt    = null;
 
 // ── Tab helpers ────────────────────────────────────────────────────
 function switchTab(name) {
-  ['users', 'sessions', 'metrics', 'replay'].forEach(t => {
-    document.getElementById(`tab-${t}`).classList.toggle('hidden', t !== name);
+  if (name === 'live' && !_liveTimer && !_liveSessionId) {
+    const row = _selectedSessionId != null
+      ? document.querySelector(`.session-row[data-sid="${_selectedSessionId}"]`)
+      : null;
+    if (row?.dataset.ongoing === '1') { openLive(_selectedSessionId); return; }
+  }
+  ['users', 'sessions', 'metrics', 'replay', 'live'].forEach(t => {
+    document.getElementById(`tab-${t}`)?.classList.toggle('hidden', t !== name);
     const btn = document.getElementById(`tab-${t}-btn`);
-    btn.classList.toggle('active', t === name);
+    if (btn) btn.classList.toggle('active', t === name);
   });
   if (name === 'replay' && _selectedSessionId !== null && _replayLoadedFor !== _selectedSessionId) {
     loadReplay(_selectedSessionId);
@@ -111,6 +135,22 @@ function selectUser(uid, uname) {
   switchTab('sessions');
 }
 
+async function _checkUserLiveBanner(uid) {
+  hide('users-live-banner');
+  if (!uid) return;
+  try {
+    const res  = await fetch(`/api/sentinel/sessions?user_id=${uid}`);
+    const data = await res.json();
+    const live = data.find(s => s.ending_at == null);
+    if (!live) return;
+    show('users-live-banner');
+    document.getElementById('users-live-activity').innerHTML = activityBadge(live.activity);
+    document.getElementById('users-live-since').textContent  = 'depuis ' + fmtTs(live.started_at);
+    const btn = document.getElementById('users-live-btn');
+    btn.onclick = () => openLive(live.id);
+  } catch (_) {}
+}
+
 // ── Sessions tab ───────────────────────────────────────────────────
 async function loadSessions(uid, uname) {
   document.getElementById('sessions-user-label').textContent =
@@ -145,27 +185,39 @@ function renderSessions(sessions) {
   const tbody = document.getElementById('sessions-tbody');
   tbody.innerHTML = '';
   sessions.forEach(s => {
+    const ongoing = s.ending_at == null;
     const tr = document.createElement('tr');
-    tr.className = 'session-row border-b border-gray-800/50' + (s.id === _selectedSessionId ? ' selected' : '');
+    tr.className = 'session-row border-b border-gray-800/50' +
+      (s.id === _selectedSessionId ? ' selected' : '') +
+      (ongoing ? ' bg-green-950/20' : '');
     tr.dataset.sid = s.id;
+    tr.dataset.ongoing = ongoing ? '1' : '0';
+
+    const durationCell = ongoing
+      ? '<span class="inline-flex items-center gap-1 text-xs text-green-400"><span class="inline-block w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"></span>En cours</span>'
+      : fmtDuration(s.duration_s);
+
+    const actionCell = ongoing
+      ? `<div class="flex gap-3 justify-end">
+           <button class="text-xs text-purple-400 hover:text-purple-300"
+                   onclick="event.stopPropagation();selectSession(${s.id})">Métriques →</button>
+           <button class="text-xs text-green-400 hover:text-green-300 font-semibold"
+                   onclick="event.stopPropagation();openLive(${s.id})">&#128994; Live →</button>
+         </div>`
+      : `<div class="flex gap-3 justify-end">
+           <button class="text-xs text-purple-400 hover:text-purple-300"
+                   onclick="event.stopPropagation();selectSession(${s.id})">Métriques →</button>
+           <button class="text-xs text-blue-400 hover:text-blue-300"
+                   onclick="event.stopPropagation();openReplay(${s.id})">Replay →</button>
+         </div>`;
+
     tr.innerHTML = `
       <td class="px-4 py-3 text-xs text-gray-400">${fmtTs(s.started_at)}</td>
       <td class="px-4 py-3">${activityBadge(s.activity)}</td>
-      <td class="px-4 py-3 text-right text-gray-300">${fmtDuration(s.duration_s)}</td>
+      <td class="px-4 py-3 text-right text-gray-300">${durationCell}</td>
       <td class="px-4 py-3 text-right text-gray-400">${s.keyboard_events.toLocaleString()}</td>
       <td class="px-4 py-3 text-right text-gray-400">${s.mouse_events.toLocaleString()}</td>
-      <td class="px-4 py-3 text-right">
-        <div class="flex gap-3 justify-end">
-          <button class="text-xs text-purple-400 hover:text-purple-300"
-                  onclick="event.stopPropagation();selectSession(${s.id})">
-            Métriques →
-          </button>
-          <button class="text-xs text-blue-400 hover:text-blue-300"
-                  onclick="event.stopPropagation();openReplay(${s.id})">
-            Replay →
-          </button>
-        </div>
-      </td>`;
+      <td class="px-4 py-3 text-right">${actionCell}</td>`;
     tr.onclick = () => selectSession(s.id);
     tbody.appendChild(tr);
   });
@@ -177,6 +229,9 @@ function selectSession(sid) {
   document.querySelectorAll('.session-row').forEach(r => {
     r.classList.toggle('selected', parseInt(r.dataset.sid) === sid);
   });
+  const row = document.querySelector(`.session-row[data-sid="${sid}"]`);
+  const liveBtn = document.getElementById('tab-live-btn');
+  if (liveBtn) liveBtn.classList.toggle('hidden', row?.dataset.ongoing !== '1' && _liveSessionId !== sid);
   loadMetrics(sid);
   switchTab('metrics');
 }
@@ -447,6 +502,99 @@ function _updatePlayBtn() {
   if (btn) btn.textContent = _PL.playing ? '⏸ Pause' : '▶ Lire';
 }
 
+// ── Replay charts ──────────────────────────────────────────────────
+let _rpCharts   = null;
+let _rpChartIdx = -1;
+
+function _computeReplayTimeSeries(events, duration) {
+  const WIN = 10, STEP = 5;
+  const series = [];
+  for (let end = WIN; end <= duration + STEP; end += STEP) {
+    const start = end - WIN;
+    const win = events.filter(e => e.t >= start && e.t < end);
+    // WPM: printable chars / 5 chars-per-word / (WIN/60 min)
+    const chars = win.filter(e =>
+      (e.k === 'key_press' || e.k === 'press') && _parseKeyChar(e.key) !== null
+    ).length;
+    const wpm = Math.round((chars / 5) / (WIN / 60));
+    // Keys/s
+    const presses = win.filter(e => e.k === 'key_press' || e.k === 'press').length;
+    const kps = Math.round((presses / WIN) * 10) / 10;
+    // Mouse speed from consecutive move events
+    const moves = win.filter(e => e.k === 'move');
+    let mouseSpeed = 0;
+    if (moves.length >= 2) {
+      let totalDist = 0, totalTime = 0;
+      for (let i = 1; i < moves.length; i++) {
+        const dx = moves[i].x - moves[i-1].x, dy = moves[i].y - moves[i-1].y;
+        const dt = moves[i].t - moves[i-1].t;
+        if (dt > 0 && dt < 1) {
+          totalDist += Math.sqrt(dx*dx + dy*dy);
+          totalTime += dt;
+        }
+      }
+      mouseSpeed = totalTime > 0 ? Math.round(totalDist / totalTime) : 0;
+    }
+    series.push({ t: end, label: _fmtTime(end), wpm, kps, mouseSpeed });
+  }
+  return series;
+}
+
+function _makeRpChart(id, color, label) {
+  const canvas = document.getElementById(id);
+  if (!canvas) return null;
+  return new Chart(canvas.getContext('2d'), {
+    type: 'line',
+    data: { labels: [], datasets: [{ label, data: [], borderColor: color,
+      backgroundColor: color + '22', borderWidth: 2, pointRadius: 2, tension: 0.4, fill: true }] },
+    options: {
+      animation: false, responsive: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { display: false },
+        y: { min: 0, grid: { color: '#21262d' }, ticks: { color: '#8b949e', font: { size: 10 } } }
+      }
+    }
+  });
+}
+
+function _initReplayCharts() {
+  if (_rpCharts) { Object.values(_rpCharts).forEach(c => c?.destroy()); }
+  _rpCharts = {
+    wpm:   _makeRpChart('rp-chart-wpm',   '#58a6ff', 'WPM'),
+    kps:   _makeRpChart('rp-chart-kps',   '#d2a8ff', 'Touches/s'),
+    mouse: _makeRpChart('rp-chart-mouse', '#2dd4bf', 'Vitesse souris'),
+  };
+  _rpChartIdx = -1;
+}
+
+function _updateReplayCharts(playhead) {
+  if (!_rpCharts || !_RP?.timeSeries) return;
+  const visible = _RP.timeSeries.filter(p => p.t <= playhead + 1);
+  const newIdx  = visible.length;
+  if (newIdx === _rpChartIdx) return;
+  _rpChartIdx = newIdx;
+  const labels    = visible.map(p => p.label);
+  const wpmData   = visible.map(p => p.wpm);
+  const kpsData   = visible.map(p => p.kps);
+  const mouseData = visible.map(p => p.mouseSpeed);
+  if (_rpCharts.wpm)   { _rpCharts.wpm.data.labels   = labels; _rpCharts.wpm.data.datasets[0].data   = wpmData;   _rpCharts.wpm.update('none'); }
+  if (_rpCharts.kps)   { _rpCharts.kps.data.labels   = labels; _rpCharts.kps.data.datasets[0].data   = kpsData;   _rpCharts.kps.update('none'); }
+  if (_rpCharts.mouse) { _rpCharts.mouse.data.labels = labels; _rpCharts.mouse.data.datasets[0].data = mouseData; _rpCharts.mouse.update('none'); }
+  // Update stat numbers
+  if (visible.length > 0) {
+    const last = visible[visible.length - 1];
+    set('rp-stat-wpm', last.wpm);
+    set('rp-stat-kps', last.kps.toFixed(1));
+    const mouseEl = document.getElementById('rp-stat-mouse');
+    if (mouseEl) mouseEl.innerHTML = `${last.mouseSpeed} <span class="text-xs">px/s</span>`;
+  } else {
+    set('rp-stat-wpm', '—'); set('rp-stat-kps', '—');
+    const mouseEl = document.getElementById('rp-stat-mouse');
+    if (mouseEl) mouseEl.innerHTML = `— <span class="text-xs">px/s</span>`;
+  }
+}
+
 // ── RAF tick ───────────────────────────────────────────────────────
 function _tick(wallNow) {
   if (!_PL.playing || !_RP) return;
@@ -467,6 +615,7 @@ function _tick(wallNow) {
   if (kbDirty)    _renderKeyboard();
   if (mouseDirty) _drawMouseCanvas();
   _syncUI();
+  _updateReplayCharts(_PL.playhead);
   if (_PL.playhead >= _RP.duration) { _PL.playing = false; _updatePlayBtn(); return; }
   _PL.rafId = requestAnimationFrame(_tick);
 }
@@ -485,6 +634,7 @@ function _seek(seconds) {
   }
   _PL.evIdx = idx;
   _renderText(); _renderKeyboard(); _drawMouseCanvas(); _syncUI();
+  _updateReplayCharts(_PL.playhead);
   if (wasPlaying && _PL.playhead < _RP.duration) {
     _PL.playing = true; _PL.lastWall = performance.now();
     _PL.rafId = requestAnimationFrame(_tick);
@@ -554,6 +704,7 @@ async function loadReplay(sid) {
 
     const dur = data.duration ?? (events.length ? events[events.length-1].t : 0);
     _RP = { events, activity: data.activity, duration: Math.max(dur, 0.1), bbox };
+    _RP.timeSeries = _computeReplayTimeSeries(events, _RP.duration);
     _PL.playing = false; _PL.playhead = 0; _PL.evIdx = 0; _PL.lastWall = null;
     _resetVisual();
 
@@ -569,6 +720,8 @@ async function loadReplay(sid) {
 
     _renderText(); _renderKeyboard(); _drawMouseCanvas(); _syncUI(); _updatePlayBtn();
     show('replay-container');
+    _initReplayCharts();
+    _updateReplayCharts(0);
   } catch(e) {
     hide('replay-loading');
     showError('replay-error', 'Impossible de charger les événements : ' + e);
@@ -584,5 +737,424 @@ function openReplay(sid) {
   switchTab('replay');
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// LIVE ENGINE
+// ═══════════════════════════════════════════════════════════════════
+
+const _LIVE_FEED_MAX = 120;
+
+const _LIVE_FEED_COLORS = {
+  key_press:   'text-blue-400',
+  key_release: 'text-gray-600',
+  click:       'text-purple-400',
+  move:        'text-gray-700',
+};
+
+// ── Live charts ────────────────────────────────────────────────────
+const _LIVE_WIN_S       = 10;   // sliding window width in seconds
+const _LIVE_CHART_MAX   = 30;   // max chart points kept
+
+function _initLiveCharts() {
+  if (_liveCharts) { Object.values(_liveCharts).forEach(c => c?.destroy()); }
+  const make = (id, color, label) => {
+    const canvas = document.getElementById(id);
+    if (!canvas) return null;
+    return new Chart(canvas.getContext('2d'), {
+      type: 'line',
+      data: { labels: [], datasets: [{ label, data: [], borderColor: color,
+        backgroundColor: color + '22', borderWidth: 2, pointRadius: 2, tension: 0.4, fill: true }] },
+      options: {
+        animation: false, responsive: true,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { display: false },
+          y: { min: 0, grid: { color: '#21262d' }, ticks: { color: '#8b949e', font: { size: 10 } } }
+        }
+      }
+    });
+  };
+  _liveCharts = {
+    wpm:   make('live-chart-wpm',   '#58a6ff', 'WPM'),
+    kps:   make('live-chart-kps',   '#d2a8ff', 'Touches/s'),
+    mouse: make('live-chart-mouse', '#2dd4bf', 'Vitesse souris'),
+  };
+}
+
+function _pushLiveChartPoint(nowTs) {
+  if (!_liveCharts) return;
+  const cutoff = nowTs - _LIVE_WIN_S;
+
+  // Trim buffers to keep only the last WIN seconds
+  while (_liveRecentPresses.length && _liveRecentPresses[0].ts < cutoff) _liveRecentPresses.shift();
+  while (_liveRecentMoves.length   && _liveRecentMoves[0].ts   < cutoff) _liveRecentMoves.shift();
+
+  // WPM: printable presses / 5 chars-per-word / (WIN/60 min)
+  const chars = _liveRecentPresses.length;
+  const wpm   = Math.round((chars / 5) / (_LIVE_WIN_S / 60));
+
+  // KPS
+  const kps = Math.round((_liveRecentPresses.length / _LIVE_WIN_S) * 10) / 10;
+
+  // Mouse speed
+  let mouseSpeed = 0;
+  if (_liveRecentMoves.length >= 2) {
+    let totalDist = 0, totalTime = 0;
+    for (let i = 1; i < _liveRecentMoves.length; i++) {
+      const dx = _liveRecentMoves[i].x - _liveRecentMoves[i-1].x;
+      const dy = _liveRecentMoves[i].y - _liveRecentMoves[i-1].y;
+      const dt = _liveRecentMoves[i].ts - _liveRecentMoves[i-1].ts;
+      if (dt > 0 && dt < 2) { totalDist += Math.sqrt(dx*dx + dy*dy); totalTime += dt; }
+    }
+    mouseSpeed = totalTime > 0 ? Math.round(totalDist / totalTime) : 0;
+  }
+
+  // Update stat numbers
+  set('live-stat-wpm', wpm);
+  set('live-stat-kps', kps.toFixed(1));
+  const mouseEl = document.getElementById('live-stat-mouse-speed');
+  if (mouseEl) mouseEl.innerHTML = `${mouseSpeed} <span class="text-xs">px/s</span>`;
+
+  // Push to charts
+  const label = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const pushChart = (c, val) => {
+    if (!c) return;
+    c.data.labels.push(label);
+    c.data.datasets[0].data.push(val);
+    if (c.data.labels.length > _LIVE_CHART_MAX) { c.data.labels.shift(); c.data.datasets[0].data.shift(); }
+    c.update('none');
+  };
+  pushChart(_liveCharts.wpm,   wpm);
+  pushChart(_liveCharts.kps,   kps);
+  pushChart(_liveCharts.mouse, mouseSpeed);
+}
+
+// ── Live mouse canvas ──────────────────────────────────────────────
+function _drawLiveMouseCanvas() {
+  const canvas = document.getElementById('live-mouse-canvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#0d1117'; ctx.fillRect(0, 0, W, H);
+  if (!_liveMouseBbox || (!_liveMouseTrajPts.length && !_liveMouseClicks.length && !_liveMousePos)) {
+    ctx.fillStyle = '#6e7681'; ctx.font = '12px monospace'; ctx.textAlign = 'center';
+    ctx.fillText('En attente de mouvements…', W/2, H/2); return;
+  }
+  const pad = 20;
+  const { minX, maxX, minY, maxY } = _liveMouseBbox;
+  const norm = (x, y) => ({
+    cx: pad + ((x - minX) / ((maxX - minX) || 1)) * (W - 2*pad),
+    cy: pad + ((y - minY) / ((maxY - minY) || 1)) * (H - 2*pad),
+  });
+  if (_liveMouseTrajPts.length > 1) {
+    ctx.beginPath();
+    const p0 = norm(_liveMouseTrajPts[0].x, _liveMouseTrajPts[0].y); ctx.moveTo(p0.cx, p0.cy);
+    for (let i = 1; i < _liveMouseTrajPts.length; i++) {
+      const p = norm(_liveMouseTrajPts[i].x, _liveMouseTrajPts[i].y); ctx.lineTo(p.cx, p.cy);
+    }
+    ctx.strokeStyle = 'rgba(88,166,255,0.22)'; ctx.lineWidth = 1; ctx.stroke();
+  }
+  for (const c of _liveMouseClicks) {
+    const { cx, cy } = norm(c.x, c.y);
+    const col = (!c.button || c.button.toLowerCase().includes('left')) ? '#3fb950' : '#f85149';
+    ctx.beginPath(); ctx.arc(cx, cy, 4, 0, Math.PI*2); ctx.fillStyle = col+'cc'; ctx.fill();
+    ctx.beginPath(); ctx.arc(cx, cy, 7, 0, Math.PI*2); ctx.strokeStyle = col+'88'; ctx.lineWidth = 1; ctx.stroke();
+  }
+  if (_liveMousePos) {
+    const { cx, cy } = norm(_liveMousePos.x, _liveMousePos.y);
+    ctx.save();
+    ctx.fillStyle = '#bc8cff'; ctx.strokeStyle = '#0d1117'; ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(cx,    cy    ); ctx.lineTo(cx,    cy+14 ); ctx.lineTo(cx+4,  cy+10 );
+    ctx.lineTo(cx+7,  cy+16 ); ctx.lineTo(cx+9,  cy+15 ); ctx.lineTo(cx+6,  cy+9  );
+    ctx.lineTo(cx+11, cy+9  ); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.restore();
+    const posEl = document.getElementById('live-mouse-pos');
+    if (posEl) posEl.textContent = `${Math.round(_liveMousePos.x)}, ${Math.round(_liveMousePos.y)}`;
+  }
+}
+
+// ── Live mouse button indicator ────────────────────────────────────
+function _flashLiveBtn(id, activeBg, activeBorder) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (_liveMBtnTimers[id]) clearTimeout(_liveMBtnTimers[id]);
+  el.style.background  = activeBg;
+  el.style.borderColor = activeBorder;
+  _liveMBtnTimers[id] = setTimeout(() => {
+    el.style.background  = '#1c2130';
+    el.style.borderColor = '#374151';
+  }, 350);
+}
+
+function _updateLiveMBtns(mouseEvents) {
+  for (const e of mouseEvents) {
+    if (e.type === 'click') {
+      const isLeft = !e.button || e.button.toLowerCase().includes('left');
+      const key = isLeft ? 'left' : 'right';
+      _liveMBtnCounts[key]++;
+      set(`live-mbtn-${key}-cnt`, _liveMBtnCounts[key]);
+      _flashLiveBtn(`live-mbtn-${key}`,
+        isLeft ? '#14532d' : '#7f1d1d',
+        isLeft ? '#3fb950' : '#f85149');
+    } else if (e.type === 'scroll') {
+      const dy = e.scroll_dy ?? 0;
+      if (dy > 0) {
+        _liveMBtnCounts.scrollup++;
+        set('live-mbtn-scrollup-cnt', _liveMBtnCounts.scrollup);
+        _flashLiveBtn('live-mbtn-scrollup', '#14532d', '#3fb950');
+      } else if (dy < 0) {
+        _liveMBtnCounts.scrolldown++;
+        set('live-mbtn-scrolldown-cnt', _liveMBtnCounts.scrolldown);
+        _flashLiveBtn('live-mbtn-scrolldown', '#14532d', '#3fb950');
+      }
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+function openLive(sid) {
+  stopLive();
+  _liveSessionId   = sid;
+  _liveSince       = 0;
+  _liveKbCounts    = {};
+  _liveKbLastPress  = {};
+  _liveTotalKeys     = 0;
+  _liveTotalClicks   = 0;
+  _liveTotalMoves    = 0;
+  _liveStartedAt     = Date.now();
+  _liveRecentPresses = [];
+  _liveRecentMoves   = [];
+  _liveMouseTrajPts  = [];
+  _liveMouseClicks   = [];
+  _liveMousePos      = null;
+  _liveMouseBbox     = null;
+  _liveMBtnCounts    = { left: 0, right: 0, scrollup: 0, scrolldown: 0 };
+  Object.values(_liveMBtnTimers).forEach(t => clearTimeout(t));
+  _liveMBtnTimers    = {};
+
+  set('live-session-label', `#${sid}`);
+  set('live-stat-keys',     '0');
+  set('live-stat-clicks',   '0');
+  set('live-stat-moves',    '0');
+  set('live-stat-duration', '0s');
+  document.getElementById('live-feed').innerHTML =
+    '<div class="text-gray-600 italic">En attente d\'événements…</div>';
+  hide('live-stopped'); show('live-container');
+  hide('live-ended-badge'); show('live-pulse');
+
+  // Show Live tab button
+  document.getElementById('tab-live-btn')?.classList.remove('hidden');
+
+  // Build keyboard heatmap
+  _buildKeyboardDOM('live-kb-container');
+
+  // Build charts
+  _initLiveCharts();
+
+  // Clear mouse canvas
+  const _mc = document.getElementById('live-mouse-canvas');
+  if (_mc) { const _mctx = _mc.getContext('2d'); _mctx.fillStyle = '#0d1117'; _mctx.fillRect(0, 0, _mc.width, _mc.height); }
+
+  switchTab('live');
+
+  // Fetch activity label for badge
+  fetch(`/api/sentinel/sessions?user_id=`)
+    .catch(() => {});
+  fetch(`/api/sentinel/session/${sid}/stats`)
+    .then(r => r.json())
+    .then(d => {
+      document.getElementById('live-activity-badge').innerHTML = activityBadge(d.activity || null);
+    }).catch(() => {});
+
+  _liveTimer = setInterval(_livePoll, 1000);
+  _livePoll();
+}
+
+async function _livePoll() {
+  if (!_liveSessionId) return;
+  try {
+    const res  = await fetch(`/api/sentinel/session/${_liveSessionId}/live?since=${_liveSince}`);
+    const data = await res.json();
+    if (data.error) return;
+
+    _liveSince = data.since;
+
+    // Update ongoing state
+    if (!data.ongoing) {
+      hide('live-pulse');
+      show('live-ended-badge');
+      stopLive(/* keepUI */ true);
+    }
+
+    // Feed sliding-window buffers (ts is epoch float in seconds)
+    const nowTs = data.since || (Date.now() / 1000);
+    for (const e of data.keyboard) {
+      if (e.type === 'key_press') _liveRecentPresses.push({ ts: e.ts });
+    }
+    for (const e of data.mouse) {
+      if (e.type === 'move') _liveRecentMoves.push({ ts: e.ts, x: e.x, y: e.y });
+    }
+    _pushLiveChartPoint(nowTs);
+
+    // Accumulate counts
+    const presses = data.keyboard.filter(e => e.type === 'key_press');
+    _liveTotalKeys   += presses.length;
+    _liveTotalClicks += data.mouse.filter(e => e.type === 'click').length;
+    _liveTotalMoves  += data.mouse.filter(e => e.type === 'move').length;
+
+    // Update keyboard heatmap
+    const now = Date.now();
+    for (const e of presses) {
+      const kid = _parseKeyId(e.key);
+      _liveKbCounts[kid]    = (_liveKbCounts[kid] || 0) + 1;
+      _liveKbLastPress[kid] = now;
+    }
+    _renderLiveKeyboard();
+
+    // Update mouse canvas
+    for (const e of data.mouse) {
+      if (e.x != null && e.y != null) {
+        if (!_liveMouseBbox) {
+          _liveMouseBbox = { minX: e.x, maxX: e.x, minY: e.y, maxY: e.y };
+        } else {
+          if (e.x < _liveMouseBbox.minX) _liveMouseBbox.minX = e.x;
+          if (e.x > _liveMouseBbox.maxX) _liveMouseBbox.maxX = e.x;
+          if (e.y < _liveMouseBbox.minY) _liveMouseBbox.minY = e.y;
+          if (e.y > _liveMouseBbox.maxY) _liveMouseBbox.maxY = e.y;
+        }
+        if (e.type !== 'scroll') _liveMousePos = { x: e.x, y: e.y };
+      }
+      if (e.type === 'move') {
+        _liveMouseTrajPts.push({ x: e.x, y: e.y });
+        if (_liveMouseTrajPts.length > 1500) _liveMouseTrajPts.shift();
+      } else if (e.type === 'click') {
+        _liveMouseClicks.push({ x: e.x, y: e.y, button: e.button });
+      }
+    }
+    _updateLiveMBtns(data.mouse);
+    _drawLiveMouseCanvas();
+
+    // Update stats
+    set('live-stat-keys',   _liveTotalKeys.toLocaleString());
+    set('live-stat-clicks', _liveTotalClicks.toLocaleString());
+    set('live-stat-moves',  _liveTotalMoves.toLocaleString());
+
+    const elapsed = Math.round((Date.now() - _liveStartedAt) / 1000);
+    set('live-stat-duration', fmtDuration(elapsed));
+
+    const total = _liveTotalKeys + _liveTotalClicks + _liveTotalMoves;
+    set('live-event-count', `${total.toLocaleString()} événements`);
+
+    // Append to feed
+    const newEvents = [
+      ...data.keyboard.map(e => ({
+        ts: e.ts, time: e.time,
+        device: 'keyboard', etype: e.type, detail: e.key,
+      })),
+      ...data.mouse.filter(e => e.type !== 'move').map(e => ({
+        ts: e.ts, time: new Date(e.ts * 1000).toLocaleTimeString('fr-FR'),
+        device: 'mouse', etype: e.type,
+        detail: e.type === 'click' ? `${e.button || ''} (${e.x},${e.y})` : `dy=${e.dy} (${e.x},${e.y})`,
+      })),
+    ].sort((a, b) => a.ts - b.ts);
+
+    if (newEvents.length) _appendLiveFeed(newEvents);
+
+  } catch (_) {}
+}
+
+function _appendLiveFeed(events) {
+  const feed = document.getElementById('live-feed');
+  const placeholder = feed.querySelector('.italic');
+  if (placeholder) placeholder.remove();
+
+  const ICONS = { keyboard: '⌨️', mouse: '🖱️' };
+  for (const ev of events) {
+    const div = document.createElement('div');
+    const color = _LIVE_FEED_COLORS[ev.etype] || 'text-gray-400';
+    div.className = `flex gap-2 py-0.5 px-1 rounded ${color}`;
+    div.innerHTML =
+      `<span class="text-gray-600 w-20 shrink-0">${ev.time}</span>` +
+      `<span class="w-4">${ICONS[ev.device] || '📡'}</span>` +
+      `<span class="w-20 shrink-0">${ev.etype}</span>` +
+      `<span class="text-gray-400">${esc(ev.detail || '')}</span>`;
+    feed.prepend(div);
+  }
+  while (feed.children.length > _LIVE_FEED_MAX) feed.lastChild.remove();
+}
+
+const _LIVE_KB_DECAY_S = 2; // seconds until a key fully fades
+
+function _renderLiveKeyboard() {
+  const container = document.getElementById('live-kb-container');
+  if (!container) return;
+  const now = Date.now();
+  container.querySelectorAll('.kb-key').forEach(el => {
+    const kid   = el.dataset.kid;
+    const count = _liveKbCounts[kid] || 0;
+    const cntEl = el.querySelector('.kb-cnt');
+    // Always show count when > 0
+    if (cntEl) cntEl.textContent = count > 0 ? (count > 9999 ? Math.round(count/1000)+'k' : count) : '';
+    if (count > 0) {
+      const age  = (now - (_liveKbLastPress[kid] || 0)) / 1000;
+      const heat = Math.max(0, 1 - age / _LIVE_KB_DECAY_S);
+      if (heat > 0) {
+        const r = Math.round(13+heat*75), g = Math.round(42+heat*124), b = Math.round(95+heat*160);
+        el.style.background  = `rgb(${r},${g},${b})`;
+        el.style.color       = heat > 0.6 ? '#0d1117' : '#c9d1d9';
+        el.style.borderColor = `rgb(${r},${g},${b})`;
+      } else {
+        // Fully decayed: dark bg, dim text so the count remains readable
+        el.style.background  = '#21262d';
+        el.style.color       = '#6e7681';
+        el.style.borderColor = '#30363d';
+      }
+    } else {
+      el.style.background  = '#21262d';
+      el.style.color       = '#484f58';
+      el.style.borderColor = '#30363d';
+    }
+    el.style.boxShadow = 'none';
+  });
+}
+
+function clearLiveFeed() {
+  document.getElementById('live-feed').innerHTML =
+    '<div class="text-gray-600 italic">Vidé.</div>';
+}
+
+function stopLive(keepUI = false) {
+  if (_liveTimer) { clearInterval(_liveTimer); _liveTimer = null; }
+  if (!keepUI) {
+    _liveSessionId = null;
+    hide('live-container'); show('live-stopped');
+    document.getElementById('tab-live-btn')?.classList.add('hidden');
+    switchTab('sessions');
+  }
+}
+
+// ── Auto-refresh (15s) ────────────────────────────────────────────
+const _AUTO_REFRESH_S = 5;
+
+function _autoRefresh() {
+  const active = ['users','sessions','metrics','replay'].find(t =>
+    !document.getElementById(`tab-${t}`)?.classList.contains('hidden')
+  );
+  if (!active) return;
+  const selectedOngoing = _selectedSessionId != null &&
+    document.querySelector(`.session-row[data-sid="${_selectedSessionId}"]`)?.dataset.ongoing === '1';
+  if (active === 'users') {
+    loadUsers();
+  } else if (active === 'sessions') {
+    reloadSessions();
+  } else if (active === 'metrics' && selectedOngoing) {
+    loadMetrics(_selectedSessionId);
+  } else if (active === 'replay' && selectedOngoing && !_PL.playing) {
+    loadReplay(_selectedSessionId);
+  }
+}
+
 // ── Init ──────────────────────────────────────────────────────────
 loadUsers();
+setInterval(_autoRefresh, _AUTO_REFRESH_S * 1000);

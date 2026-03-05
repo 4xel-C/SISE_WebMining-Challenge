@@ -10,10 +10,12 @@ from app.collector.keyboard_listener import KeyboardListener
 from app.collector.mouse_listener import MouseListener
 from app.models.schema import (
     Activity,
+    ActivityCategory,
     KeyboardEvent,
     MouseEvent,
     RecordingSession,
     User,
+    _DB_URL,
     create_tables,
     get_session,
 )
@@ -34,12 +36,12 @@ class RegisterService:
         self,
         username: str,
         activity_label: Literal["coding", "writing", "gaming", "train"],
-        db_url: str = "sqlite:///keysentinel.db",
+        db_url: str | None = None,
         session_id: str | None = None,
     ):
         self.username = username
         self.activity_label = activity_label
-        self.db_url = db_url
+        self.db_url = db_url or _DB_URL
         self.session_id = session_id or str(uuid.uuid4())
 
         self._event_queue: queue.Queue = queue.Queue()
@@ -49,6 +51,7 @@ class RegisterService:
         self._flush_thread: threading.Thread | None = None
 
         self._recording_session_id: int | None = None
+        self._user_id: int | None = None
 
     def _init_session(self):
         """Crée ou récupère l'utilisateur, l'activité, et crée la RecordingSession."""
@@ -58,7 +61,10 @@ class RegisterService:
                 user = User(name=self.username)
                 session.add(user)
                 session.flush()
+            user.is_on_line = True
+            user.on_going_activity = ActivityCategory(self.activity_label)
             user_id = user.id
+            self._user_id = user_id
 
             activity = (
                 session.query(Activity).filter_by(label=self.activity_label).first()
@@ -83,9 +89,15 @@ class RegisterService:
         """Vide la queue et écrit les événements en base toutes les secondes."""
         while self._running:
             time.sleep(1.0)
-            self._flush()
+            try:
+                self._flush()
+            except Exception as exc:
+                print(f"[RegisterService] erreur flush : {exc}")
         # flush final après l'arrêt
-        self._flush()
+        try:
+            self._flush()
+        except Exception as exc:
+            print(f"[RegisterService] erreur flush final : {exc}")
 
     def _flush(self):
         events = []
@@ -150,6 +162,11 @@ class RegisterService:
             rec = session.get(RecordingSession, self._recording_session_id)
             if rec is not None:
                 rec.ending_at = time.time()
+            if self._user_id is not None:
+                user = session.get(User, self._user_id)
+                if user is not None:
+                    user.is_on_line = False
+                    user.on_going_activity = None
 
     def stop(self):
         """Arrête les listeners et attend le flush final."""

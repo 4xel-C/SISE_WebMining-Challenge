@@ -19,6 +19,8 @@ dependencies = [
     "requests>=2.32.5",
     "ipykernel>=7.2.0",
     "pandas>=3.0.1",
+    "psycopg2-binary>=2.9.11",
+    "python-dotenv>=1.2.2",
 ]
 
 [project.scripts]
@@ -30,3 +32,8 @@ packages = ["app"]
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.19.0",
+]

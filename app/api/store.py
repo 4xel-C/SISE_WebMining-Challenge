@@ -14,6 +14,8 @@ import threading
 import time
 from collections import deque
 
+import app.services.ml_service as ml_service
+
 _lock = threading.Lock()
 
 # ── Session courante ───────────────────────────────────────────────────────────
@@ -41,7 +43,7 @@ _GAMING_KEYS = {"w", "a", "s", "d", "Key.up", "Key.down", "Key.left", "Key.right
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-def session_start(user: str, activity: str) -> int:
+def session_start(user: str, activity: str | None) -> int:
     global _session, _next_id
     with _lock:
         sid = _next_id
@@ -204,26 +206,8 @@ def get_live_features() -> dict:
 
 
 def get_live_prediction() -> dict:
-    """
-    Prédiction sans modèle entraîné : renvoie l'activité ground-truth
-    de la session courante.  Sera remplacé par ml_service.predict() en Phase 2.
-    """
+    now = time.time()
     with _lock:
-        activity = _session["activity"]
-        active = _session["active"]
+        recent = [ev for ev in _events if ev.get("ts", 0) >= now - 30]
+    return ml_service.predict(recent)
 
-    if not active or activity is None:
-        return {
-            "activity": None,
-            "confidence": None,
-            "probabilities": {"coding": None, "writing": None, "gaming": None},
-        }
-
-    probs = {"coding": 0.0, "writing": 0.0, "gaming": 0.0}
-    probs[activity] = 1.0
-
-    return {
-        "activity": activity,
-        "confidence": 1.0,
-        "probabilities": probs,
-    }
