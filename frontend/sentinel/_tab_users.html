@@ -30,4 +30,51 @@
     Aucun utilisateur dans la base de données.
   </div>
 
+  <!-- ── User charts ──────────────────────────────────────────── -->
+  <div id="users-charts" class="hidden mt-6 space-y-4">
+
+    <!-- Row 1 : bar sessions | bar temps | donut activités -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+
+      <div class="card p-4">
+        <div class="text-xs text-gray-500 uppercase tracking-widest mb-3">📊 Sessions par utilisateur</div>
+        <canvas id="users-chart-sessions" style="max-height:180px"></canvas>
+      </div>
+
+      <div class="card p-4">
+        <div class="text-xs text-gray-500 uppercase tracking-widest mb-3">⏱ Temps total enregistré (min)</div>
+        <canvas id="users-chart-time" style="max-height:180px"></canvas>
+      </div>
+
+      <div class="card p-4">
+        <div class="flex items-center justify-between mb-3">
+          <div class="text-xs text-gray-500 uppercase tracking-widest">🎯 Répartition activités</div>
+          <span id="users-donut-label" class="text-xs text-gray-600">Tous</span>
+        </div>
+        <div class="flex items-center gap-3">
+          <div style="flex:1;min-width:0"><canvas id="users-chart-donut" style="max-height:160px"></canvas></div>
+          <div id="users-donut-legend" class="text-xs space-y-1 shrink-0"></div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Row 2 : Gantt timeline full width -->
+    <div class="card p-4">
+      <div class="flex items-center justify-between mb-3">
+        <div class="text-xs text-gray-500 uppercase tracking-widest">🗓 Timeline des sessions</div>
+        <div class="flex items-center gap-3 text-xs text-gray-600">
+          <span><span class="inline-block w-3 h-2 rounded mr-1" style="background:#1f6feb"></span>Coding</span>
+          <span><span class="inline-block w-3 h-2 rounded mr-1" style="background:#238636"></span>Writing</span>
+          <span><span class="inline-block w-3 h-2 rounded mr-1" style="background:#6e40c9"></span>Gaming</span>
+          <span><span class="inline-block w-3 h-2 rounded mr-1" style="background:#30363d"></span>Inconnu</span>
+        </div>
+      </div>
+      <div class="overflow-x-auto">
+        <canvas id="users-chart-gantt"></canvas>
+      </div>
+    </div>
+
+  </div>
+
 </section>

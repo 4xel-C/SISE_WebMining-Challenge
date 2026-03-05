@@ -1,10 +1,10 @@
 // ── KeySentinel — Sentinel mode JS ──────────────────────────────────
 
 // ── State ──────────────────────────────────────────────────────────
- let _selectedUserId   = null;
-let _selectedUserName = null;
+let _selectedUserId    = null;
+let _selectedUserName  = null;
 let _selectedSessionId = null;
-let _replayLoadedFor  = null;
+let _replayLoadedFor    = null;
 let _liveSessionId    = null;  // session currently watched live
 let _liveSince        = 0;     // timestamp cursor for incremental fetch
 let _liveTimer        = null;  // setInterval handle
@@ -23,6 +23,10 @@ let _liveTotalKeys    = 0;
 let _liveTotalClicks  = 0;
 let _liveTotalMoves   = 0;
 let _liveStartedAt    = null;
+
+// ── Users charts state ─────────────────────────────────────────────
+let _usersCharts       = null;   // { sessions, time, donut, gantt canvas }
+let _usersAllSessions  = [];     // all sessions cache
 
 // ── Tab helpers ────────────────────────────────────────────────────
 function switchTab(name) {
@@ -83,18 +87,25 @@ function fmtMinutes(min) {
 
 // ── Users tab ──────────────────────────────────────────────────────
 async function loadUsers() {
-  show('users-loading'); hide('users-error'); hide('users-table'); hide('users-empty');
+  show('users-loading'); hide('users-error'); hide('users-table'); hide('users-empty'); hide('users-charts');
   try {
-    const res  = await fetch('/api/sentinel/users');
-    const data = await res.json();
+    const [resU, resS] = await Promise.all([
+      fetch('/api/sentinel/users'),
+      fetch('/api/sentinel/sessions'),
+    ]);
+    const users    = await resU.json();
+    const sessions = await resS.json();
     hide('users-loading');
-    if (data.error) { showError('users-error', data.error); return; }
-    if (!data.length) { show('users-empty'); return; }
-    renderUsers(data);
+    if (users.error) { showError('users-error', users.error); return; }
+    if (!users.length) { show('users-empty'); return; }
+    _usersAllSessions = Array.isArray(sessions) ? sessions : [];
+    renderUsers(users);
     show('users-table');
+    _buildUsersCharts(users, _usersAllSessions);
+    show('users-charts');
   } catch (e) {
     hide('users-loading');
-    showError('users-error', 'Impossible de contacter le serveur.' + e);
+    showError('users-error', 'Impossible de contacter le serveur. ' + e);
   }
 }
 
@@ -116,21 +127,28 @@ function renderUsers(users) {
       <td class="px-4 py-3 text-right text-gray-400">${u.session_count}</td>
       <td class="px-4 py-3 text-right">
         <button class="text-xs text-blue-400 hover:text-blue-300"
-                onclick="selectUser(${u.id}, '${esc(u.name)}')">
+                onclick="event.stopPropagation();selectUser(${u.id}, '${esc(u.name)}')">
           Voir sessions →
         </button>
       </td>`;
-    tr.onclick = () => selectUser(u.id, u.name);
+    // Row click = highlight + update donut only (no navigation)
+    tr.onclick = () => highlightUser(u.id, u.name);
     tbody.appendChild(tr);
   });
 }
 
-function selectUser(uid, uname) {
+// Highlight a user row and update the donut, without navigating.
+function highlightUser(uid, uname) {
   _selectedUserId   = uid;
   _selectedUserName = uname;
-  document.querySelectorAll('.user-row').forEach(r => {
-    r.classList.toggle('selected', parseInt(r.dataset.uid) === uid);
-  });
+  document.querySelectorAll('.user-row').forEach(r =>
+    r.classList.toggle('selected', parseInt(r.dataset.uid) === uid)
+  );
+  _updateUsersDonut(uid, _usersAllSessions);
+}
+
+function selectUser(uid, uname) {
+  highlightUser(uid, uname);
   loadSessions(uid, uname);
   switchTab('sessions');
 }
@@ -273,6 +291,205 @@ function renderMetrics(d) {
   document.getElementById('m-coding-bar' ).style.width = pct(d.coding_time  || 0) + '%';
   document.getElementById('m-writing-bar').style.width = pct(d.writing_time || 0) + '%';
   document.getElementById('m-gaming-bar' ).style.width = pct(d.gaming_time  || 0) + '%';
+}
+
+// ── Users charts ───────────────────────────────────────────────────
+const _ACT_COLORS = {
+  coding:  { bg: '#1f6feb', border: '#58a6ff' },
+  writing: { bg: '#238636', border: '#3fb950' },
+  gaming:  { bg: '#6e40c9', border: '#d2a8ff' },
+};
+
+function _makeSmallChart(id, type, data, options) {
+  const canvas = document.getElementById(id);
+  if (!canvas) return null;
+  return new Chart(canvas.getContext('2d'), { type, data, options });
+}
+
+const _CHART_BASE_OPTS = {
+  animation: false,
+  responsive: true,
+  plugins: { legend: { display: false } },
+};
+
+function _buildUsersCharts(users, sessions) {
+  // Destroy previous instances
+  if (_usersCharts) {
+    _usersCharts.sessions?.destroy();
+    _usersCharts.time?.destroy();
+    _usersCharts.donut?.destroy();
+  }
+  _usersCharts = {};
+
+  // ── Chart 1 : Bar — sessions par user ─────────────────────────
+  const sortedByCount = [...users].sort((a, b) => b.session_count - a.session_count);
+  _usersCharts.sessions = _makeSmallChart('users-chart-sessions', 'bar', {
+    labels: sortedByCount.map(u => u.name),
+    datasets: [{
+      data: sortedByCount.map(u => u.session_count),
+      backgroundColor: sortedByCount.map(u => u.is_on_line ? '#3fb95066' : '#58a6ff44'),
+      borderColor:     sortedByCount.map(u => u.is_on_line ? '#3fb950'   : '#58a6ff'),
+      borderWidth: 1, borderRadius: 4,
+    }],
+  }, {
+    ..._CHART_BASE_OPTS,
+    scales: {
+      x: { ticks: { color: '#8b949e', font: { size: 10 } }, grid: { color: '#21262d' } },
+      y: { min: 0, ticks: { color: '#8b949e', font: { size: 10 } }, grid: { color: '#21262d' } },
+    },
+  });
+
+  // ── Chart 2 : Horizontal bar — temps total par user (minutes) ─
+  const timeByUser = {};
+  sessions.forEach(s => {
+    if (!s.user_name) return;
+    timeByUser[s.user_name] = (timeByUser[s.user_name] || 0) + (s.duration_s || 0);
+  });
+  // include users with 0 time
+  users.forEach(u => { if (!(u.name in timeByUser)) timeByUser[u.name] = 0; });
+  const sortedByTime = Object.entries(timeByUser).sort((a, b) => b[1] - a[1]);
+  _usersCharts.time = _makeSmallChart('users-chart-time', 'bar', {
+    labels: sortedByTime.map(e => e[0]),
+    datasets: [{
+      data: sortedByTime.map(e => Math.round(e[1] / 60 * 10) / 10),
+      backgroundColor: '#d2a8ff44',
+      borderColor:     '#d2a8ff',
+      borderWidth: 1, borderRadius: 4,
+    }],
+  }, {
+    ..._CHART_BASE_OPTS,
+    indexAxis: 'y',
+    scales: {
+      x: { min: 0, ticks: { color: '#8b949e', font: { size: 10 } }, grid: { color: '#21262d' } },
+      y: { ticks: { color: '#8b949e', font: { size: 10 } }, grid: { color: '#21262d' } },
+    },
+  });
+
+  // ── Chart 3 : Donut — répartition activités ───────────────────
+  _usersCharts.donut = _buildUsersDonutChart(null, sessions);
+
+  // ── Chart 4 : Gantt (canvas 2D) ───────────────────────────────
+  _drawUsersGantt(users, sessions);
+}
+
+function _buildUsersDonutChart(uid, sessions) {
+  const filtered = uid != null ? sessions.filter(s => s.user_id === uid) : sessions;
+  const totals = { coding: 0, writing: 0, gaming: 0 };
+  filtered.forEach(s => {
+    // Prefer predicted times; fall back to counting by activity label
+    if ((s.coding_time || 0) + (s.writing_time || 0) + (s.gaming_time || 0) > 0) {
+      totals.coding  += s.coding_time  || 0;
+      totals.writing += s.writing_time || 0;
+      totals.gaming  += s.gaming_time  || 0;
+    } else if (s.activity) {
+      totals[s.activity] = (totals[s.activity] || 0) + (s.duration_s || 0);
+    }
+  });
+  const total = totals.coding + totals.writing + totals.gaming;
+  // Legend
+  const legendEl = document.getElementById('users-donut-legend');
+  if (legendEl) {
+    legendEl.innerHTML = ['coding', 'writing', 'gaming'].map(a => {
+      const pct = total > 0 ? Math.round(totals[a] / total * 100) : 0;
+      const c = _ACT_COLORS[a] || { bg: '#30363d', border: '#6e7681' };
+      return `<div class="flex items-center gap-1"><span class="w-3 h-3 rounded-sm inline-block" style="background:${c.bg}"></span><span style="color:#c9d1d9">${a}</span><span class="ml-1" style="color:#6e7681">${pct}%</span></div>`;
+    }).join('');
+  }
+  return _makeSmallChart('users-chart-donut', 'doughnut', {
+    labels: ['Coding', 'Writing', 'Gaming'],
+    datasets: [{
+      data: [totals.coding, totals.writing, totals.gaming],
+      backgroundColor: ['#1f6feb88', '#23863688', '#6e40c988'],
+      borderColor:     ['#58a6ff',   '#3fb950',   '#d2a8ff'],
+      borderWidth: 1,
+    }],
+  }, {
+    ..._CHART_BASE_OPTS,
+    cutout: '60%',
+    plugins: { legend: { display: false } },
+  });
+}
+
+function _updateUsersDonut(uid, sessions) {
+  _usersCharts?.donut?.destroy();
+  const label = uid != null
+    ? (sessions.find(s => s.user_id === uid)?.user_name ?? `#${uid}`)
+    : 'Tous';
+  const el = document.getElementById('users-donut-label');
+  if (el) el.textContent = label;
+  if (_usersCharts) _usersCharts.donut = _buildUsersDonutChart(uid, sessions);
+}
+
+function _drawUsersGantt(users, sessions) {
+  const canvas = document.getElementById('users-chart-gantt');
+  if (!canvas) return;
+
+  const ROW_H = 34, PAD_TOP = 24, PAD_BOT = 8, PAD_L = 90, PAD_R = 16;
+  const nUsers = users.length;
+  canvas.height = PAD_TOP + nUsers * ROW_H + PAD_BOT;
+  canvas.width  = canvas.offsetWidth || 800;
+  canvas.style.display = 'block';
+
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#0d1117'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const finishedSessions = sessions.filter(s => s.started_at && s.ending_at);
+  if (!finishedSessions.length && !sessions.filter(s => s.started_at).length) {
+    ctx.fillStyle = '#6e7681'; ctx.font = '12px monospace'; ctx.textAlign = 'center';
+    ctx.fillText('Aucune session', canvas.width / 2, canvas.height / 2);
+    return;
+  }
+
+  const allSessions = sessions.filter(s => s.started_at);
+  const nowTs  = Date.now() / 1000;
+  const tMin   = Math.min(...allSessions.map(s => s.started_at));
+  const tMax   = Math.max(...allSessions.map(s => s.ending_at || nowTs));
+  const tRange = tMax - tMin || 1;
+  const W = canvas.width - PAD_L - PAD_R;
+
+  const tx = (ts) => PAD_L + ((ts - tMin) / tRange) * W;
+
+  // Draw time axis labels (up to ~6 ticks)
+  ctx.fillStyle = '#6e7681'; ctx.font = '9px monospace'; ctx.textAlign = 'center';
+  const nTicks = Math.min(6, Math.ceil(tRange / 3600));
+  for (let i = 0; i <= nTicks; i++) {
+    const ts  = tMin + (tRange * i / nTicks);
+    const x   = tx(ts);
+    const lbl = new Date(ts * 1000).toLocaleString('fr-FR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+    ctx.fillText(lbl, x, PAD_TOP - 6);
+    ctx.strokeStyle = '#21262d'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x, PAD_TOP); ctx.lineTo(x, PAD_TOP + nUsers * ROW_H); ctx.stroke();
+  }
+
+  // Draw rows
+  users.forEach((u, i) => {
+    const y = PAD_TOP + i * ROW_H;
+    // Row background
+    ctx.fillStyle = i % 2 === 0 ? '#0d1117' : '#161b22';
+    ctx.fillRect(0, y, canvas.width, ROW_H);
+    // User label
+    ctx.fillStyle = '#c9d1d9'; ctx.font = '11px monospace'; ctx.textAlign = 'right';
+    ctx.fillText(u.name.slice(0, 12), PAD_L - 8, y + ROW_H / 2 + 4);
+
+    // Sessions bars
+    const userSessions = allSessions.filter(s => s.user_id === u.id);
+    userSessions.forEach(s => {
+      const x1  = tx(s.started_at);
+      const x2  = tx(s.ending_at || nowTs);
+      const bw  = Math.max(x2 - x1, 2);
+      const col = _ACT_COLORS[s.activity]?.bg || '#30363d';
+      ctx.fillStyle = col;
+      ctx.beginPath();
+      ctx.roundRect(x1, y + 6, bw, ROW_H - 12, 3);
+      ctx.fill();
+      // Ongoing highlight
+      if (!s.ending_at) {
+        ctx.strokeStyle = '#3fb950'; ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
+    });
+  });
 }
 
 // ── DOM helpers ────────────────────────────────────────────────────
