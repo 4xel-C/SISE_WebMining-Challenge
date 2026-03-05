@@ -19,7 +19,7 @@ import requests
 from app.models.schema import _DB_URL
 
 FLASK_URL = "http://127.0.0.1:5000/api/status"
-BOOT_TIMEOUT = 15  # secondes max pour attendre Flask
+BOOT_TIMEOUT = 30  # secondes max pour attendre Flask
 
 
 def _wait_for_flask(timeout: float) -> bool:
