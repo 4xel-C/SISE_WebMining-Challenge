@@ -17,7 +17,7 @@ let _liveStartedAt    = null;
 
 // ── Tab helpers ────────────────────────────────────────────────────
 function switchTab(name) {
-  if (name === 'live' && !_liveTimer) {
+  if (name === 'live' && !_liveTimer && !_liveSessionId) {
     const row = _selectedSessionId != null
       ? document.querySelector(`.session-row[data-sid="${_selectedSessionId}"]`)
       : null;
