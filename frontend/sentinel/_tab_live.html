@@ -111,6 +111,7 @@
                 style="background:#0d1117;border-radius:6px;width:100%;display:block;margin:0 auto"></canvas>
         <div class="mt-2 flex items-center gap-4 text-xs text-gray-600 justify-center">
           <span><span class="inline-block w-2 h-2 rounded-full mr-1" style="background:#3fb950"></span>Clic gauche</span>
+          <span><span class="inline-block w-2 h-2 rounded-full mr-1" style="background:#f0883e"></span>Clic milieu</span>
           <span><span class="inline-block w-2 h-2 rounded-full mr-1" style="background:#f85149"></span>Clic droit</span>
           <span style="color:rgba(88,166,255,.6)">── Trajectoire</span>
         </div>
@@ -130,12 +131,18 @@
               <div class="text-xs" style="color:#6e7681">L</div>
               <div id="live-mbtn-left-cnt" class="text-base font-bold" style="color:#c9d1d9">0</div>
             </div>
-            <!-- Scroll -->
+            <!-- Scroll + Middle -->
             <div class="flex flex-col items-center justify-center gap-1 px-1"
                  style="background:#12182a;border-top:1px solid #374151">
               <div id="live-mbtn-scrollup"
                    class="flex items-center justify-center rounded-full text-xs transition-all duration-150"
                    style="width:22px;height:22px;background:#1c2130;border:1px solid #374151;color:#6e7681">↑</div>
+              <div id="live-mbtn-middle"
+                   class="flex flex-col items-center justify-center rounded transition-all duration-150"
+                   style="width:22px;min-height:26px;background:#1c2130;border:1px solid #374151">
+                <div class="text-xs" style="color:#6e7681;line-height:1">M</div>
+                <div id="live-mbtn-middle-cnt" class="text-xs font-bold" style="color:#c9d1d9;line-height:1.2">0</div>
+              </div>
               <div id="live-mbtn-scrolldown"
                    class="flex items-center justify-center rounded-full text-xs transition-all duration-150"
                    style="width:22px;height:22px;background:#1c2130;border:1px solid #374151;color:#6e7681">↓</div>
@@ -155,6 +162,9 @@
           <span id="live-mbtn-scrollup-cnt" style="color:#9ca3af">0</span>↑
           &nbsp;
           <span id="live-mbtn-scrolldown-cnt" style="color:#9ca3af">0</span>↓
+        </div>
+        <div class="text-center text-xs" style="color:#6b7280">
+          Clic milieu: <span id="live-mbtn-middle-total" style="color:#f0883e">0</span>
         </div>
         <div class="text-center text-xs" style="color:#6b7280">
           Pos: <span id="live-mouse-pos" style="color:#9ca3af">—</span>

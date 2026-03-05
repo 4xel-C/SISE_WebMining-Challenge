@@ -1,10 +1,10 @@
 // ── KeySentinel — Sentinel mode JS ──────────────────────────────────
 
 // ── State ──────────────────────────────────────────────────────────
- let _selectedUserId   = null;
-let _selectedUserName = null;
+let _selectedUserId    = null;
+let _selectedUserName  = null;
 let _selectedSessionId = null;
-let _replayLoadedFor  = null;
+let _replayLoadedFor    = null;
 let _liveSessionId    = null;  // session currently watched live
 let _liveSince        = 0;     // timestamp cursor for incremental fetch
 let _liveTimer        = null;  // setInterval handle
@@ -16,13 +16,21 @@ let _liveMouseTrajPts  = [];   // {x,y} capped at 1500 for canvas drawing
 let _liveMouseClicks   = [];   // all {x,y,button} for session
 let _liveMousePos      = null;
 let _liveMouseBbox     = null; // {minX,maxX,minY,maxY} expanded dynamically
-let _liveMBtnCounts    = { left: 0, right: 0, scrollup: 0, scrolldown: 0 };
+let _liveMBtnCounts    = { left: 0, right: 0, middle: 0, scrollup: 0, scrolldown: 0 };
 let _liveMBtnTimers    = {};
 let _liveKbLastPress  = {};    // Date.now() of most recent press per key
 let _liveTotalKeys    = 0;
 let _liveTotalClicks  = 0;
 let _liveTotalMoves   = 0;
 let _liveStartedAt    = null;
+let _pollInFlight     = false; // prevents concurrent _livePoll calls
+
+// ── Users charts state ─────────────────────────────────────────────
+let _usersCharts       = null;   // { sessions, time, donut, gantt canvas }
+let _usersAllSessions  = [];     // all sessions cache
+
+// ── Sessions charts state ──────────────────────────────────────────
+let _sessionsCharts    = {};     // { scatter, hist, hours, stacked, activity }
 
 // ── Tab helpers ────────────────────────────────────────────────────
 function switchTab(name) {
@@ -83,18 +91,25 @@ function fmtMinutes(min) {
 
 // ── Users tab ──────────────────────────────────────────────────────
 async function loadUsers() {
-  show('users-loading'); hide('users-error'); hide('users-table'); hide('users-empty');
+  show('users-loading'); hide('users-error'); hide('users-table'); hide('users-empty'); hide('users-charts');
   try {
-    const res  = await fetch('/api/sentinel/users');
-    const data = await res.json();
+    const [resU, resS] = await Promise.all([
+      fetch('/api/sentinel/users'),
+      fetch('/api/sentinel/sessions'),
+    ]);
+    const users    = await resU.json();
+    const sessions = await resS.json();
     hide('users-loading');
-    if (data.error) { showError('users-error', data.error); return; }
-    if (!data.length) { show('users-empty'); return; }
-    renderUsers(data);
+    if (users.error) { showError('users-error', users.error); return; }
+    if (!users.length) { show('users-empty'); return; }
+    _usersAllSessions = Array.isArray(sessions) ? sessions : [];
+    renderUsers(users);
     show('users-table');
+    _buildUsersCharts(users, _usersAllSessions);
+    show('users-charts');
   } catch (e) {
     hide('users-loading');
-    showError('users-error', 'Impossible de contacter le serveur.' + e);
+    showError('users-error', 'Impossible de contacter le serveur. ' + e);
   }
 }
 
@@ -116,21 +131,28 @@ function renderUsers(users) {
       <td class="px-4 py-3 text-right text-gray-400">${u.session_count}</td>
       <td class="px-4 py-3 text-right">
         <button class="text-xs text-blue-400 hover:text-blue-300"
-                onclick="selectUser(${u.id}, '${esc(u.name)}')">
+                onclick="event.stopPropagation();selectUser(${u.id}, '${esc(u.name)}')">
           Voir sessions →
         </button>
       </td>`;
-    tr.onclick = () => selectUser(u.id, u.name);
+    // Row click = highlight + update donut only (no navigation)
+    tr.onclick = () => highlightUser(u.id, u.name);
     tbody.appendChild(tr);
   });
 }
 
-function selectUser(uid, uname) {
+// Highlight a user row and update the donut, without navigating.
+function highlightUser(uid, uname) {
   _selectedUserId   = uid;
   _selectedUserName = uname;
-  document.querySelectorAll('.user-row').forEach(r => {
-    r.classList.toggle('selected', parseInt(r.dataset.uid) === uid);
-  });
+  document.querySelectorAll('.user-row').forEach(r =>
+    r.classList.toggle('selected', parseInt(r.dataset.uid) === uid)
+  );
+  _updateUsersDonut(uid, _usersAllSessions);
+}
+
+function selectUser(uid, uname) {
+  highlightUser(uid, uname);
   loadSessions(uid, uname);
   switchTab('sessions');
 }
@@ -156,7 +178,7 @@ async function loadSessions(uid, uname) {
   document.getElementById('sessions-user-label').textContent =
     uname ? `— ${uname}` : '';
   show('sessions-loading');
-  hide('sessions-error'); hide('sessions-table'); hide('sessions-empty');
+  hide('sessions-error'); hide('sessions-table'); hide('sessions-empty'); hide('sessions-charts');
   document.getElementById('sessions-loading').textContent = 'Chargement…';
 
   const url = uid != null
@@ -170,6 +192,8 @@ async function loadSessions(uid, uname) {
     if (!data.length) { show('sessions-empty'); return; }
     renderSessions(data);
     show('sessions-table');
+    _buildSessionsCharts(data);
+    show('sessions-charts');
   } catch(e) {
     hide('sessions-loading');
     showError('sessions-error', 'Impossible de contacter le serveur.');
@@ -273,6 +297,384 @@ function renderMetrics(d) {
   document.getElementById('m-coding-bar' ).style.width = pct(d.coding_time  || 0) + '%';
   document.getElementById('m-writing-bar').style.width = pct(d.writing_time || 0) + '%';
   document.getElementById('m-gaming-bar' ).style.width = pct(d.gaming_time  || 0) + '%';
+}
+
+// ── Users charts ───────────────────────────────────────────────────
+const _ACT_COLORS = {
+  coding:  { bg: '#1f6feb', border: '#58a6ff' },
+  writing: { bg: '#238636', border: '#3fb950' },
+  gaming:  { bg: '#6e40c9', border: '#d2a8ff' },
+};
+
+function _makeSmallChart(id, type, data, options) {
+  const canvas = document.getElementById(id);
+  if (!canvas) return null;
+  return new Chart(canvas.getContext('2d'), { type, data, options });
+}
+
+const _CHART_BASE_OPTS = {
+  animation: false,
+  responsive: true,
+  plugins: { legend: { display: false } },
+};
+
+function _buildUsersCharts(users, sessions) {
+  // Destroy previous instances
+  if (_usersCharts) {
+    _usersCharts.sessions?.destroy();
+    _usersCharts.time?.destroy();
+    _usersCharts.donut?.destroy();
+  }
+  _usersCharts = {};
+
+  // ── Chart 1 : Bar — sessions par user ─────────────────────────
+  const sortedByCount = [...users].sort((a, b) => b.session_count - a.session_count);
+  _usersCharts.sessions = _makeSmallChart('users-chart-sessions', 'bar', {
+    labels: sortedByCount.map(u => u.name),
+    datasets: [{
+      data: sortedByCount.map(u => u.session_count),
+      backgroundColor: sortedByCount.map(u => u.is_on_line ? '#3fb95066' : '#58a6ff44'),
+      borderColor:     sortedByCount.map(u => u.is_on_line ? '#3fb950'   : '#58a6ff'),
+      borderWidth: 1, borderRadius: 4,
+    }],
+  }, {
+    ..._CHART_BASE_OPTS,
+    scales: {
+      x: { ticks: { color: '#8b949e', font: { size: 10 } }, grid: { color: '#21262d' } },
+      y: { min: 0, ticks: { color: '#8b949e', font: { size: 10 } }, grid: { color: '#21262d' } },
+    },
+  });
+
+  // ── Chart 2 : Horizontal bar — temps total par user (minutes) ─
+  const timeByUser = {};
+  sessions.forEach(s => {
+    if (!s.user_name) return;
+    timeByUser[s.user_name] = (timeByUser[s.user_name] || 0) + (s.duration_s || 0);
+  });
+  // include users with 0 time
+  users.forEach(u => { if (!(u.name in timeByUser)) timeByUser[u.name] = 0; });
+  const sortedByTime = Object.entries(timeByUser).sort((a, b) => b[1] - a[1]);
+  _usersCharts.time = _makeSmallChart('users-chart-time', 'bar', {
+    labels: sortedByTime.map(e => e[0]),
+    datasets: [{
+      data: sortedByTime.map(e => Math.round(e[1] / 60 * 10) / 10),
+      backgroundColor: '#d2a8ff44',
+      borderColor:     '#d2a8ff',
+      borderWidth: 1, borderRadius: 4,
+    }],
+  }, {
+    ..._CHART_BASE_OPTS,
+    indexAxis: 'y',
+    scales: {
+      x: { min: 0, ticks: { color: '#8b949e', font: { size: 10 } }, grid: { color: '#21262d' } },
+      y: { ticks: { color: '#8b949e', font: { size: 10 } }, grid: { color: '#21262d' } },
+    },
+  });
+
+  // ── Chart 3 : Donut — répartition activités ───────────────────
+  _usersCharts.donut = _buildUsersDonutChart(null, sessions);
+
+  // ── Chart 4 : Gantt (canvas 2D) ───────────────────────────────
+  _drawUsersGantt(users, sessions);
+}
+
+function _buildUsersDonutChart(uid, sessions) {
+  const filtered = uid != null ? sessions.filter(s => s.user_id === uid) : sessions;
+  const totals = { coding: 0, writing: 0, gaming: 0 };
+  filtered.forEach(s => {
+    // Prefer predicted times; fall back to counting by activity label
+    if ((s.coding_time || 0) + (s.writing_time || 0) + (s.gaming_time || 0) > 0) {
+      totals.coding  += s.coding_time  || 0;
+      totals.writing += s.writing_time || 0;
+      totals.gaming  += s.gaming_time  || 0;
+    } else if (s.activity) {
+      totals[s.activity] = (totals[s.activity] || 0) + (s.duration_s || 0);
+    }
+  });
+  const total = totals.coding + totals.writing + totals.gaming;
+  // Legend
+  const legendEl = document.getElementById('users-donut-legend');
+  if (legendEl) {
+    legendEl.innerHTML = ['coding', 'writing', 'gaming'].map(a => {
+      const pct = total > 0 ? Math.round(totals[a] / total * 100) : 0;
+      const c = _ACT_COLORS[a] || { bg: '#30363d', border: '#6e7681' };
+      return `<div class="flex items-center gap-1"><span class="w-3 h-3 rounded-sm inline-block" style="background:${c.bg}"></span><span style="color:#c9d1d9">${a}</span><span class="ml-1" style="color:#6e7681">${pct}%</span></div>`;
+    }).join('');
+  }
+  return _makeSmallChart('users-chart-donut', 'doughnut', {
+    labels: ['Coding', 'Writing', 'Gaming'],
+    datasets: [{
+      data: [totals.coding, totals.writing, totals.gaming],
+      backgroundColor: ['#1f6feb88', '#23863688', '#6e40c988'],
+      borderColor:     ['#58a6ff',   '#3fb950',   '#d2a8ff'],
+      borderWidth: 1,
+    }],
+  }, {
+    ..._CHART_BASE_OPTS,
+    cutout: '60%',
+    plugins: { legend: { display: false } },
+  });
+}
+
+function _updateUsersDonut(uid, sessions) {
+  _usersCharts?.donut?.destroy();
+  const label = uid != null
+    ? (sessions.find(s => s.user_id === uid)?.user_name ?? `#${uid}`)
+    : 'Tous';
+  const el = document.getElementById('users-donut-label');
+  if (el) el.textContent = label;
+  if (_usersCharts) _usersCharts.donut = _buildUsersDonutChart(uid, sessions);
+}
+
+function _drawUsersGantt(users, sessions) {
+  const canvas = document.getElementById('users-chart-gantt');
+  if (!canvas) return;
+
+  const ROW_H = 34, PAD_TOP = 24, PAD_BOT = 8, PAD_L = 90, PAD_R = 16;
+  const nUsers = users.length;
+  canvas.height = PAD_TOP + nUsers * ROW_H + PAD_BOT;
+  canvas.width  = canvas.offsetWidth || 800;
+  canvas.style.display = 'block';
+
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#0d1117'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const finishedSessions = sessions.filter(s => s.started_at && s.ending_at);
+  if (!finishedSessions.length && !sessions.filter(s => s.started_at).length) {
+    ctx.fillStyle = '#6e7681'; ctx.font = '12px monospace'; ctx.textAlign = 'center';
+    ctx.fillText('Aucune session', canvas.width / 2, canvas.height / 2);
+    return;
+  }
+
+  const allSessions = sessions.filter(s => s.started_at);
+  const nowTs  = Date.now() / 1000;
+  const tMin   = Math.min(...allSessions.map(s => s.started_at));
+  const tMax   = Math.max(...allSessions.map(s => s.ending_at || nowTs));
+  const tRange = tMax - tMin || 1;
+  const W = canvas.width - PAD_L - PAD_R;
+
+  const tx = (ts) => PAD_L + ((ts - tMin) / tRange) * W;
+
+  // Draw time axis labels (up to ~6 ticks)
+  ctx.fillStyle = '#6e7681'; ctx.font = '9px monospace'; ctx.textAlign = 'center';
+  const nTicks = Math.min(6, Math.ceil(tRange / 3600));
+  for (let i = 0; i <= nTicks; i++) {
+    const ts  = tMin + (tRange * i / nTicks);
+    const x   = tx(ts);
+    const lbl = new Date(ts * 1000).toLocaleString('fr-FR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+    ctx.fillText(lbl, x, PAD_TOP - 6);
+    ctx.strokeStyle = '#21262d'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x, PAD_TOP); ctx.lineTo(x, PAD_TOP + nUsers * ROW_H); ctx.stroke();
+  }
+
+  // Draw rows
+  users.forEach((u, i) => {
+    const y = PAD_TOP + i * ROW_H;
+    // Row background
+    ctx.fillStyle = i % 2 === 0 ? '#0d1117' : '#161b22';
+    ctx.fillRect(0, y, canvas.width, ROW_H);
+    // User label
+    ctx.fillStyle = '#c9d1d9'; ctx.font = '11px monospace'; ctx.textAlign = 'right';
+    ctx.fillText(u.name.slice(0, 12), PAD_L - 8, y + ROW_H / 2 + 4);
+
+    // Sessions bars
+    const userSessions = allSessions.filter(s => s.user_id === u.id);
+    userSessions.forEach(s => {
+      const x1  = tx(s.started_at);
+      const x2  = tx(s.ending_at || nowTs);
+      const bw  = Math.max(x2 - x1, 2);
+      const col = _ACT_COLORS[s.activity]?.bg || '#30363d';
+      ctx.fillStyle = col;
+      ctx.beginPath();
+      ctx.roundRect(x1, y + 6, bw, ROW_H - 12, 3);
+      ctx.fill();
+      // Ongoing highlight
+      if (!s.ending_at) {
+        ctx.strokeStyle = '#3fb950'; ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
+    });
+  });
+}
+
+// ── Sessions charts ───────────────────────────────────────────────
+function _buildSessionsCharts(sessions) {
+  // Destroy previous instances
+  Object.values(_sessionsCharts).forEach(c => c?.destroy?.());
+  _sessionsCharts = {};
+
+  if (!sessions || !sessions.length) { hide('sessions-charts'); return; }
+
+  const GREY = { bg: '#30363d', border: '#6e7681' };
+
+  // ── 1. Scatter: durée (min) vs frappes clavier ─────────────────
+  (() => {
+    const acts = ['coding', 'writing', 'gaming', null];
+    const labels = { coding: 'Coding', writing: 'Writing', gaming: 'Gaming', null: 'Inconnu' };
+    const datasets = acts.map(act => {
+      const pts = sessions
+        .filter(s => (s.activity ?? null) === act)
+        .map(s => ({ x: +(s.duration_s / 60).toFixed(2), y: s.keyboard_events }));
+      const col = _ACT_COLORS[act] || GREY;
+      return {
+        label: labels[act],
+        data: pts,
+        backgroundColor: col.bg + 'cc',
+        borderColor: col.border,
+        borderWidth: 1,
+        pointRadius: 5,
+        pointHoverRadius: 7,
+      };
+    }).filter(d => d.data.length > 0);
+
+    const el = document.getElementById('sess-chart-scatter');
+    if (!el) return;
+    _sessionsCharts.scatter = new Chart(el, {
+      type: 'scatter',
+      data: { datasets },
+      options: {
+        ...JSON.parse(JSON.stringify(_CHART_BASE_OPTS)),
+        plugins: { legend: { display: true, labels: { color: '#8b949e', font: { size: 10 } } } },
+        scales: {
+          x: { title: { display: true, text: 'Durée (min)', color: '#6e7681', font: { size: 10 } },
+               ticks: { color: '#6e7681' }, grid: { color: '#21262d' } },
+          y: { title: { display: true, text: 'Frappes clavier', color: '#6e7681', font: { size: 10 } },
+               ticks: { color: '#6e7681' }, grid: { color: '#21262d' } },
+        },
+      },
+    });
+  })();
+
+  // ── 2. Histogram: distribution des durées ──────────────────────
+  (() => {
+    const bins   = [[0,5],[5,10],[10,20],[20,30],[30,60],[60,Infinity]];
+    const labels = ['0-5 min','5-10 min','10-20 min','20-30 min','30-60 min','60+ min'];
+    const counts = bins.map(([lo, hi]) =>
+      sessions.filter(s => s.duration_s >= lo*60 && s.duration_s < hi*60).length
+    );
+    const el = document.getElementById('sess-chart-hist');
+    if (!el) return;
+    _sessionsCharts.hist = new Chart(el, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{ data: counts, backgroundColor: '#6e40c9cc', borderColor: '#d2a8ff', borderWidth: 1 }],
+      },
+      options: {
+        ...JSON.parse(JSON.stringify(_CHART_BASE_OPTS)),
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { color: '#6e7681', font: { size: 10 } }, grid: { color: '#21262d' } },
+          y: { ticks: { color: '#6e7681', stepSize: 1 }, grid: { color: '#21262d' }, beginAtZero: true },
+        },
+      },
+    });
+  })();
+
+  // ── 3. Bar grouped: average touches/s & souris/s per activity ──
+  (() => {
+    const acts = ['coding', 'writing', 'gaming'];
+    const actLabels = ['Coding', 'Writing', 'Gaming'];
+    const avgKPS = acts.map(act => {
+      const gr = sessions.filter(s => s.activity === act && s.duration_s > 0);
+      if (!gr.length) return 0;
+      return +(gr.reduce((a, s) => a + s.keyboard_events / s.duration_s, 0) / gr.length).toFixed(3);
+    });
+    const avgMPS = acts.map(act => {
+      const gr = sessions.filter(s => s.activity === act && s.duration_s > 0);
+      if (!gr.length) return 0;
+      return +(gr.reduce((a, s) => a + s.mouse_events / s.duration_s, 0) / gr.length).toFixed(3);
+    });
+    const el = document.getElementById('sess-chart-activity-bar');
+    if (!el) return;
+    _sessionsCharts.activity = new Chart(el, {
+      type: 'bar',
+      data: {
+        labels: actLabels,
+        datasets: [
+          { label: 'Touches/s', data: avgKPS, backgroundColor: '#1f6febcc', borderColor: '#58a6ff', borderWidth: 1 },
+          { label: 'Souris/s',  data: avgMPS, backgroundColor: '#238636cc', borderColor: '#3fb950', borderWidth: 1 },
+        ],
+      },
+      options: {
+        ...JSON.parse(JSON.stringify(_CHART_BASE_OPTS)),
+        plugins: { legend: { display: true, labels: { color: '#8b949e', font: { size: 10 } } } },
+        scales: {
+          x: { ticks: { color: '#6e7681' }, grid: { color: '#21262d' } },
+          y: { ticks: { color: '#6e7681' }, grid: { color: '#21262d' }, beginAtZero: true },
+        },
+      },
+    });
+  })();
+
+  // ── 4. Bar: sessions par heure de la journée ───────────────────
+  (() => {
+    const counts = new Array(24).fill(0);
+    sessions.forEach(s => {
+      if (!s.started_at) return;
+      const h = new Date(s.started_at * 1000).getHours();
+      counts[h]++;
+    });
+    const labels = Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2,'0')}h`);
+    const el = document.getElementById('sess-chart-hours');
+    if (!el) return;
+    _sessionsCharts.hours = new Chart(el, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{ data: counts, backgroundColor: '#388bfd80', borderColor: '#58a6ff', borderWidth: 1 }],
+      },
+      options: {
+        ...JSON.parse(JSON.stringify(_CHART_BASE_OPTS)),
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { color: '#6e7681', font: { size: 9 }, maxRotation: 0 }, grid: { color: '#21262d' } },
+          y: { ticks: { color: '#6e7681', stepSize: 1 }, grid: { color: '#21262d' }, beginAtZero: true },
+        },
+      },
+    });
+  })();
+
+  // ── 5. Stacked bar: coding/writing/gaming time per session ─────
+  (() => {
+    const mlSessions = sessions
+      .filter(s => (s.coding_time || 0) + (s.writing_time || 0) + (s.gaming_time || 0) > 0)
+      .slice(-20); // show latest 20 to keep readable
+    if (!mlSessions.length) return;
+
+    const labels = mlSessions.map(s => {
+      const d = new Date(s.started_at * 1000);
+      return d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }) + ' ' +
+             d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+    });
+    const coding  = mlSessions.map(s => +((s.coding_time  || 0) / 60).toFixed(1));
+    const writing = mlSessions.map(s => +((s.writing_time || 0) / 60).toFixed(1));
+    const gaming  = mlSessions.map(s => +((s.gaming_time  || 0) / 60).toFixed(1));
+
+    const el = document.getElementById('sess-chart-stacked');
+    if (!el) return;
+    _sessionsCharts.stacked = new Chart(el, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [
+          { label: 'Coding',  data: coding,  backgroundColor: '#1f6febcc', borderColor: '#58a6ff', borderWidth: 1 },
+          { label: 'Writing', data: writing, backgroundColor: '#238636cc', borderColor: '#3fb950', borderWidth: 1 },
+          { label: 'Gaming',  data: gaming,  backgroundColor: '#6e40c9cc', borderColor: '#d2a8ff', borderWidth: 1 },
+        ],
+      },
+      options: {
+        ...JSON.parse(JSON.stringify(_CHART_BASE_OPTS)),
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { stacked: true, ticks: { color: '#6e7681', font: { size: 8 }, maxRotation: 35 }, grid: { color: '#21262d' } },
+          y: { stacked: true, title: { display: true, text: 'min', color: '#6e7681', font: { size: 9 } },
+               ticks: { color: '#6e7681' }, grid: { color: '#21262d' }, beginAtZero: true },
+        },
+      },
+    });
+  })();
 }
 
 // ── DOM helpers ────────────────────────────────────────────────────
@@ -461,7 +863,8 @@ function _drawMouseCanvas() {
   }
   for (const c of _allClicks) {
     const { cx, cy } = norm(c.x, c.y);
-    const col = (!c.button || c.button.includes('left')) ? '#3fb950' : '#f85149';
+    const btn = (c.button || '').toLowerCase();
+    const col = !btn || btn.includes('left') ? '#3fb950' : btn.includes('middle') ? '#f0883e' : '#f85149';
     ctx.beginPath(); ctx.arc(cx, cy, 4, 0, Math.PI*2); ctx.fillStyle = col+'cc'; ctx.fill();
     ctx.beginPath(); ctx.arc(cx, cy, 7, 0, Math.PI*2); ctx.strokeStyle = col+'88'; ctx.lineWidth=1; ctx.stroke();
   }
@@ -856,7 +1259,8 @@ function _drawLiveMouseCanvas() {
   }
   for (const c of _liveMouseClicks) {
     const { cx, cy } = norm(c.x, c.y);
-    const col = (!c.button || c.button.toLowerCase().includes('left')) ? '#3fb950' : '#f85149';
+    const btn2 = (c.button || '').toLowerCase();
+    const col = !btn2 || btn2.includes('left') ? '#3fb950' : btn2.includes('middle') ? '#f0883e' : '#f85149';
     ctx.beginPath(); ctx.arc(cx, cy, 4, 0, Math.PI*2); ctx.fillStyle = col+'cc'; ctx.fill();
     ctx.beginPath(); ctx.arc(cx, cy, 7, 0, Math.PI*2); ctx.strokeStyle = col+'88'; ctx.lineWidth = 1; ctx.stroke();
   }
@@ -889,14 +1293,22 @@ function _flashLiveBtn(id, activeBg, activeBorder) {
 
 function _updateLiveMBtns(mouseEvents) {
   for (const e of mouseEvents) {
-    if (e.type === 'click') {
-      const isLeft = !e.button || e.button.toLowerCase().includes('left');
-      const key = isLeft ? 'left' : 'right';
+    if (e.type === 'click' && e.pressed !== false) {
+      const btn = (e.button || '').toLowerCase();
+      const isLeft   = !btn || btn.includes('left');
+      const isMiddle = btn.includes('middle');
+      const key = isLeft ? 'left' : isMiddle ? 'middle' : 'right';
       _liveMBtnCounts[key]++;
-      set(`live-mbtn-${key}-cnt`, _liveMBtnCounts[key]);
-      _flashLiveBtn(`live-mbtn-${key}`,
-        isLeft ? '#14532d' : '#7f1d1d',
-        isLeft ? '#3fb950' : '#f85149');
+      if (key === 'middle') {
+        set('live-mbtn-middle-cnt',   _liveMBtnCounts.middle);
+        set('live-mbtn-middle-total', _liveMBtnCounts.middle);
+        _flashLiveBtn('live-mbtn-middle', '#713f12', '#f0883e');
+      } else {
+        set(`live-mbtn-${key}-cnt`, _liveMBtnCounts[key]);
+        _flashLiveBtn(`live-mbtn-${key}`,
+          isLeft ? '#14532d' : '#7f1d1d',
+          isLeft ? '#3fb950' : '#f85149');
+      }
     } else if (e.type === 'scroll') {
       const dy = e.scroll_dy ?? 0;
       if (dy > 0) {
@@ -929,9 +1341,10 @@ function openLive(sid) {
   _liveMouseClicks   = [];
   _liveMousePos      = null;
   _liveMouseBbox     = null;
-  _liveMBtnCounts    = { left: 0, right: 0, scrollup: 0, scrolldown: 0 };
+  _liveMBtnCounts    = { left: 0, right: 0, middle: 0, scrollup: 0, scrolldown: 0 };
   Object.values(_liveMBtnTimers).forEach(t => clearTimeout(t));
   _liveMBtnTimers    = {};
+  _pollInFlight      = false;
 
   set('live-session-label', `#${sid}`);
   set('live-stat-keys',     '0');
@@ -972,7 +1385,8 @@ function openLive(sid) {
 }
 
 async function _livePoll() {
-  if (!_liveSessionId) return;
+  if (!_liveSessionId || _pollInFlight) return;
+  _pollInFlight = true;
   try {
     const res  = await fetch(`/api/sentinel/session/${_liveSessionId}/live?since=${_liveSince}`);
     const data = await res.json();
@@ -1000,7 +1414,7 @@ async function _livePoll() {
     // Accumulate counts
     const presses = data.keyboard.filter(e => e.type === 'key_press');
     _liveTotalKeys   += presses.length;
-    _liveTotalClicks += data.mouse.filter(e => e.type === 'click').length;
+    _liveTotalClicks += data.mouse.filter(e => e.type === 'click' && e.pressed !== false).length;
     _liveTotalMoves  += data.mouse.filter(e => e.type === 'move').length;
 
     // Update keyboard heatmap
@@ -1028,7 +1442,7 @@ async function _livePoll() {
       if (e.type === 'move') {
         _liveMouseTrajPts.push({ x: e.x, y: e.y });
         if (_liveMouseTrajPts.length > 1500) _liveMouseTrajPts.shift();
-      } else if (e.type === 'click') {
+      } else if (e.type === 'click' && e.pressed !== false) {
         _liveMouseClicks.push({ x: e.x, y: e.y, button: e.button });
       }
     }
@@ -1052,7 +1466,7 @@ async function _livePoll() {
         ts: e.ts, time: e.time,
         device: 'keyboard', etype: e.type, detail: e.key,
       })),
-      ...data.mouse.filter(e => e.type !== 'move').map(e => ({
+      ...data.mouse.filter(e => e.type !== 'move' && (e.type !== 'click' || e.pressed !== false)).map(e => ({
         ts: e.ts, time: new Date(e.ts * 1000).toLocaleTimeString('fr-FR'),
         device: 'mouse', etype: e.type,
         detail: e.type === 'click' ? `${e.button || ''} (${e.x},${e.y})` : `dy=${e.dy} (${e.x},${e.y})`,
@@ -1061,7 +1475,9 @@ async function _livePoll() {
 
     if (newEvents.length) _appendLiveFeed(newEvents);
 
-  } catch (_) {}
+  } catch (_) {} finally {
+    _pollInFlight = false;
+  }
 }
 
 function _appendLiveFeed(events) {
@@ -1137,6 +1553,165 @@ function stopLive(keepUI = false) {
 // ── Auto-refresh (15s) ────────────────────────────────────────────
 const _AUTO_REFRESH_S = 5;
 
+// Silent background patch for Users tab — no hide/show, only update changed cells
+async function _patchUsers() {
+  try {
+    const [resU, resS] = await Promise.all([
+      fetch('/api/sentinel/users'),
+      fetch('/api/sentinel/sessions'),
+    ]);
+    const users    = await resU.json();
+    const sessions = await resS.json();
+    if (!Array.isArray(users) || users.error) return;
+    _usersAllSessions = Array.isArray(sessions) ? sessions : [];
+
+    const tbody = document.getElementById('users-tbody');
+    if (!tbody) return;
+
+    const existingIds = new Set([...tbody.querySelectorAll('tr[data-uid]')].map(r => +r.dataset.uid));
+    const newIds      = new Set(users.map(u => u.id));
+    const listChanged = existingIds.size !== newIds.size || [...newIds].some(id => !existingIds.has(id));
+
+    if (listChanged) {
+      // Structure changed: full render (rare — new user registered)
+      renderUsers(users);
+      show('users-table'); hide('users-empty');
+      _buildUsersCharts(users, _usersAllSessions);
+      show('users-charts');
+      return;
+    }
+
+    // Patch only the cells that can change between polls
+    let dataChanged = false;
+    users.forEach(u => {
+      const tr = tbody.querySelector(`tr[data-uid="${u.id}"]`);
+      if (!tr) return;
+      const dot = u.is_on_line
+        ? '<span class="inline-block w-2 h-2 rounded-full dot-on mr-2"></span>En ligne'
+        : '<span class="inline-block w-2 h-2 rounded-full dot-off mr-2"></span>Hors ligne';
+      if (tr.cells[0].innerHTML !== dot) { tr.cells[0].innerHTML = dot; dataChanged = true; }
+      const badge = activityBadge(u.on_going_activity);
+      if (tr.cells[2].innerHTML !== badge) { tr.cells[2].innerHTML = badge; dataChanged = true; }
+      const cnt = String(u.session_count);
+      if (tr.cells[3].textContent !== cnt) { tr.cells[3].textContent = cnt; dataChanged = true; }
+    });
+
+    // Only rebuild charts when something actually changed
+    if (dataChanged) _buildUsersCharts(users, _usersAllSessions);
+  } catch (_) {}
+}
+
+// Silent background patch for Sessions tab — no hide/show, only update changed cells
+async function _patchSessions() {
+  try {
+    const uid = _selectedUserId;
+    const url = uid != null ? `/api/sentinel/sessions?user_id=${uid}` : '/api/sentinel/sessions';
+    const res  = await fetch(url);
+    const data = await res.json();
+    if (!Array.isArray(data) || data.error) return;
+
+    const tbody = document.getElementById('sessions-tbody');
+    if (!tbody || !tbody.querySelector('tr')) return; // table not yet rendered
+
+    const existingIds = new Set([...tbody.querySelectorAll('tr[data-sid]')].map(r => +r.dataset.sid));
+    const newIds      = new Set(data.map(s => s.id));
+    const listChanged = [...newIds].some(id => !existingIds.has(id)) ||
+                        [...existingIds].some(id => !newIds.has(id));
+
+    if (listChanged) {
+      // New/removed sessions: full render then rebuild charts
+      renderSessions(data);
+      _buildSessionsCharts(data);
+      return;
+    }
+
+    // Patch individual rows
+    let dataChanged = false;
+    data.forEach(s => {
+      const tr = tbody.querySelector(`tr[data-sid="${s.id}"]`);
+      if (!tr) return;
+      const wasOngoing = tr.dataset.ongoing === '1';
+      const isOngoing  = s.ending_at == null;
+
+      if (wasOngoing && !isOngoing) {
+        // Session just ended: rebuild just this row in-place
+        dataChanged = true;
+        tr.dataset.ongoing = '0';
+        tr.classList.remove('bg-green-950/20');
+        tr.cells[2].innerHTML = fmtDuration(s.duration_s);
+        tr.cells[5].innerHTML = `<div class="flex gap-3 justify-end">
+           <button class="text-xs text-purple-400 hover:text-purple-300"
+                   onclick="event.stopPropagation();selectSession(${s.id})">Métriques →</button>
+           <button class="text-xs text-blue-400 hover:text-blue-300"
+                   onclick="event.stopPropagation();openReplay(${s.id})">Replay →</button>
+         </div>`;
+        return;
+      }
+
+      // Update live counts (keyboard/mouse always increment for ongoing sessions)
+      const kb = s.keyboard_events.toLocaleString();
+      const ms = s.mouse_events.toLocaleString();
+      if (tr.cells[3].textContent !== kb) { tr.cells[3].textContent = kb; dataChanged = true; }
+      if (tr.cells[4].textContent !== ms) { tr.cells[4].textContent = ms; dataChanged = true; }
+      if (!isOngoing) {
+        const dur = fmtDuration(s.duration_s);
+        if (tr.cells[2].textContent !== dur) { tr.cells[2].innerHTML = dur; dataChanged = true; }
+      }
+    });
+
+    if (dataChanged) _buildSessionsCharts(data);
+  } catch (_) {}
+}
+
+// Silent background patch for Replay tab — extends event buffer without interrupting playback
+async function _patchReplay(sid) {
+  if (!_RP || _replayLoadedFor !== sid) { loadReplay(sid); return; }
+  try {
+    const res  = await fetch(`/api/sentinel/session/${sid}/events`);
+    const data = await res.json();
+    if (data.error) return;
+
+    const newEvents = [];
+    for (const e of (data.keyboard || [])) newEvents.push({ t: e.ts_offset, k: e.type, key: e.key });
+    for (const e of (data.mouse    || [])) newEvents.push({ t: e.ts_offset, k: e.type, x: e.x, y: e.y, button: e.button });
+    newEvents.sort((a, b) => a.t - b.t);
+
+    if (newEvents.length <= _RP.events.length) return; // nothing new
+
+    const newDur = data.duration ?? (newEvents.length ? newEvents[newEvents.length - 1].t : _RP.duration);
+    const wasAtEnd = _PL.playhead >= _RP.duration - 0.1; // playhead was at the very end
+    const oldDur   = _RP.duration;
+
+    _RP.events     = newEvents;
+    _RP.duration   = Math.max(newDur, 0.1);
+    _RP.timeSeries = _computeReplayTimeSeries(newEvents, _RP.duration);
+
+    // Extend scrubber range without moving playhead
+    const scrubber = document.getElementById('replay-progress');
+    if (scrubber) scrubber.max = _RP.duration.toFixed(2);
+
+    _updateReplayCharts(_PL.playhead);
+
+    // If playhead was parked at the old end and new data arrived, resume playback
+    if (wasAtEnd && _RP.duration > oldDur + 0.05 && !_PL.playing) {
+      _PL.playing  = true;
+      _PL.lastWall = performance.now();
+      _PL.rafId    = requestAnimationFrame(_tick);
+      _updatePlayBtn();
+    }
+  } catch (_) {}
+}
+
+// Silent patch for Metrics tab — just overwrite text nodes, no visibility change
+async function _patchMetrics(sid) {
+  try {
+    const res = await fetch(`/api/sentinel/session/${sid}/stats`);
+    const d   = await res.json();
+    if (d.error) return;
+    renderMetrics(d);
+  } catch (_) {}
+}
+
 function _autoRefresh() {
   const active = ['users','sessions','metrics','replay'].find(t =>
     !document.getElementById(`tab-${t}`)?.classList.contains('hidden')
@@ -1145,13 +1720,13 @@ function _autoRefresh() {
   const selectedOngoing = _selectedSessionId != null &&
     document.querySelector(`.session-row[data-sid="${_selectedSessionId}"]`)?.dataset.ongoing === '1';
   if (active === 'users') {
-    loadUsers();
+    _patchUsers();
   } else if (active === 'sessions') {
-    reloadSessions();
+    _patchSessions();
   } else if (active === 'metrics' && selectedOngoing) {
-    loadMetrics(_selectedSessionId);
-  } else if (active === 'replay' && selectedOngoing && !_PL.playing) {
-    loadReplay(_selectedSessionId);
+    _patchMetrics(_selectedSessionId);
+  } else if (active === 'replay') {
+    if (_selectedSessionId != null) _patchReplay(_selectedSessionId);
   }
 }
 

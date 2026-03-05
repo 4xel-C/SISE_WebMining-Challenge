@@ -35,6 +35,8 @@ def make_mouse_listener(push: Callable, stop: Callable) -> mouse.Listener:
         )
 
     def on_click(x, y, button, pressed):
+        if not pressed:
+            return  # ignore button-release events; only count button-down
         push(
             {
                 "type": "mouse",
