@@ -79,7 +79,6 @@ class TrayApp:
         self._icon: pystray.Icon | None = None
 
     # ── Menu ──────────────────────────────────────────────────────────────────
-
     def _make_menu(self) -> pystray.Menu:
         if self._mode == "sentinel":
             server_label = (

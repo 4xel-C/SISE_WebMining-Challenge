@@ -206,6 +206,8 @@ def get_live_features() -> dict:
 
 
 def get_live_prediction() -> dict:
+    now = time.time()
     with _lock:
-        recent = list(_events)
+        recent = [ev for ev in _events if ev.get("ts", 0) >= now - 30]
     return ml_service.predict(recent)
+

@@ -7,8 +7,8 @@ if __name__ == "__main__":
     # Create tables if they don't exist
     create_tables()
 
-    # Initialize services to register events for user "axel" doing "train"
-    service = RegisterService(username="axel", activity_label="train")
+    # Initialize services to register events
+    service = RegisterService(username="axel", activity_label="writing")
 
     # start services
     service.start()
