@@ -42,6 +42,38 @@
       </div>
     </div>
 
+    <!-- Computed stats row -->
+    <div class="grid grid-cols-3 gap-3 mb-4">
+      <div class="card p-3 flex flex-col items-center justify-center gap-1">
+        <div class="text-xs text-gray-500 uppercase tracking-widest">WPM</div>
+        <div id="live-stat-wpm" class="text-2xl font-bold text-blue-400">—</div>
+      </div>
+      <div class="card p-3 flex flex-col items-center justify-center gap-1">
+        <div class="text-xs text-gray-500 uppercase tracking-widest">Touches / s</div>
+        <div id="live-stat-kps" class="text-2xl font-bold text-purple-400">—</div>
+      </div>
+      <div class="card p-3 flex flex-col items-center justify-center gap-1">
+        <div class="text-xs text-gray-500 uppercase tracking-widest">Vitesse souris</div>
+        <div id="live-stat-mouse-speed" class="text-2xl font-bold text-teal-400">— <span class="text-xs">px/s</span></div>
+      </div>
+    </div>
+
+    <!-- Charts -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+      <div class="card p-4">
+        <div class="text-xs text-gray-500 uppercase tracking-widest mb-2">WPM (fenêtre 10s)</div>
+        <canvas id="live-chart-wpm" style="max-height:120px"></canvas>
+      </div>
+      <div class="card p-4">
+        <div class="text-xs text-gray-500 uppercase tracking-widest mb-2">Touches / s</div>
+        <canvas id="live-chart-kps" style="max-height:120px"></canvas>
+      </div>
+      <div class="card p-4">
+        <div class="text-xs text-gray-500 uppercase tracking-widest mb-2">Vitesse souris (px/s)</div>
+        <canvas id="live-chart-mouse" style="max-height:120px"></canvas>
+      </div>
+    </div>
+
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
 
       <!-- Event feed -->

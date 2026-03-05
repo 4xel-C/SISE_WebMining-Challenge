@@ -18,6 +18,7 @@
     <!-- Controls bar -->
     <div class="card p-3 mb-4">
       <div class="flex flex-wrap items-center gap-2 mb-2">
+
         <button onclick="playerReset()"
                 class="w-8 h-8 rounded bg-gray-800 hover:bg-gray-700 text-sm transition-colors flex items-center justify-center"
                 title="Revenir au début">⏮</button>
@@ -40,6 +41,38 @@
              oninput="playerScrub(this.value)"
              onmousedown="_scrubbing=true" onmouseup="_scrubbing=false;playerScrub(this.value)"
              ontouchstart="_scrubbing=true" ontouchend="_scrubbing=false" />
+    </div>
+
+    <!-- Stats row -->
+    <div class="grid grid-cols-3 gap-3 mb-4">
+      <div class="card p-3 flex flex-col items-center justify-center gap-1">
+        <div class="text-xs text-gray-500 uppercase tracking-widest">WPM</div>
+        <div id="rp-stat-wpm" class="text-2xl font-bold text-blue-400">—</div>
+      </div>
+      <div class="card p-3 flex flex-col items-center justify-center gap-1">
+        <div class="text-xs text-gray-500 uppercase tracking-widest">Touches / s</div>
+        <div id="rp-stat-kps" class="text-2xl font-bold text-purple-400">—</div>
+      </div>
+      <div class="card p-3 flex flex-col items-center justify-center gap-1">
+        <div class="text-xs text-gray-500 uppercase tracking-widest">Vitesse souris</div>
+        <div id="rp-stat-mouse" class="text-2xl font-bold text-teal-400">— <span class="text-xs">px/s</span></div>
+      </div>
+    </div>
+
+    <!-- Charts row -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+      <div class="card p-4">
+        <div class="text-xs text-gray-500 uppercase tracking-widest mb-2">WPM</div>
+        <canvas id="rp-chart-wpm" style="max-height:120px"></canvas>
+      </div>
+      <div class="card p-4">
+        <div class="text-xs text-gray-500 uppercase tracking-widest mb-2">Touches / s</div>
+        <canvas id="rp-chart-kps" style="max-height:120px"></canvas>
+      </div>
+      <div class="card p-4">
+        <div class="text-xs text-gray-500 uppercase tracking-widest mb-2">Vitesse souris (px/s)</div>
+        <canvas id="rp-chart-mouse" style="max-height:120px"></canvas>
+      </div>
     </div>
 
     <!-- Writing view (grid: text 2/3, mouse 1/3) -->

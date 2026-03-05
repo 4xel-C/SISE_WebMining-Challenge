@@ -8,7 +8,10 @@ let _replayLoadedFor  = null;
 let _liveSessionId    = null;  // session currently watched live
 let _liveSince        = 0;     // timestamp cursor for incremental fetch
 let _liveTimer        = null;  // setInterval handle
-let _liveKbCounts     = {};    // key heatmap for live tab
+let _liveKbCounts      = {};   // key heatmap for live tab
+let _liveRecentPresses = [];  // {ts} for sliding-window WPM/KPS
+let _liveRecentMoves   = [];  // {ts, x, y} for mouse speed
+let _liveCharts        = null;
 let _liveKbLastPress  = {};    // Date.now() of most recent press per key
 let _liveTotalKeys    = 0;
 let _liveTotalClicks  = 0;
@@ -493,6 +496,99 @@ function _updatePlayBtn() {
   if (btn) btn.textContent = _PL.playing ? '⏸ Pause' : '▶ Lire';
 }
 
+// ── Replay charts ──────────────────────────────────────────────────
+let _rpCharts   = null;
+let _rpChartIdx = -1;
+
+function _computeReplayTimeSeries(events, duration) {
+  const WIN = 10, STEP = 5;
+  const series = [];
+  for (let end = WIN; end <= duration + STEP; end += STEP) {
+    const start = end - WIN;
+    const win = events.filter(e => e.t >= start && e.t < end);
+    // WPM: printable chars / 5 chars-per-word / (WIN/60 min)
+    const chars = win.filter(e =>
+      (e.k === 'key_press' || e.k === 'press') && _parseKeyChar(e.key) !== null
+    ).length;
+    const wpm = Math.round((chars / 5) / (WIN / 60));
+    // Keys/s
+    const presses = win.filter(e => e.k === 'key_press' || e.k === 'press').length;
+    const kps = Math.round((presses / WIN) * 10) / 10;
+    // Mouse speed from consecutive move events
+    const moves = win.filter(e => e.k === 'move');
+    let mouseSpeed = 0;
+    if (moves.length >= 2) {
+      let totalDist = 0, totalTime = 0;
+      for (let i = 1; i < moves.length; i++) {
+        const dx = moves[i].x - moves[i-1].x, dy = moves[i].y - moves[i-1].y;
+        const dt = moves[i].t - moves[i-1].t;
+        if (dt > 0 && dt < 1) {
+          totalDist += Math.sqrt(dx*dx + dy*dy);
+          totalTime += dt;
+        }
+      }
+      mouseSpeed = totalTime > 0 ? Math.round(totalDist / totalTime) : 0;
+    }
+    series.push({ t: end, label: _fmtTime(end), wpm, kps, mouseSpeed });
+  }
+  return series;
+}
+
+function _makeRpChart(id, color, label) {
+  const canvas = document.getElementById(id);
+  if (!canvas) return null;
+  return new Chart(canvas.getContext('2d'), {
+    type: 'line',
+    data: { labels: [], datasets: [{ label, data: [], borderColor: color,
+      backgroundColor: color + '22', borderWidth: 2, pointRadius: 2, tension: 0.4, fill: true }] },
+    options: {
+      animation: false, responsive: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { display: false },
+        y: { min: 0, grid: { color: '#21262d' }, ticks: { color: '#8b949e', font: { size: 10 } } }
+      }
+    }
+  });
+}
+
+function _initReplayCharts() {
+  if (_rpCharts) { Object.values(_rpCharts).forEach(c => c?.destroy()); }
+  _rpCharts = {
+    wpm:   _makeRpChart('rp-chart-wpm',   '#58a6ff', 'WPM'),
+    kps:   _makeRpChart('rp-chart-kps',   '#d2a8ff', 'Touches/s'),
+    mouse: _makeRpChart('rp-chart-mouse', '#2dd4bf', 'Vitesse souris'),
+  };
+  _rpChartIdx = -1;
+}
+
+function _updateReplayCharts(playhead) {
+  if (!_rpCharts || !_RP?.timeSeries) return;
+  const visible = _RP.timeSeries.filter(p => p.t <= playhead + 1);
+  const newIdx  = visible.length;
+  if (newIdx === _rpChartIdx) return;
+  _rpChartIdx = newIdx;
+  const labels    = visible.map(p => p.label);
+  const wpmData   = visible.map(p => p.wpm);
+  const kpsData   = visible.map(p => p.kps);
+  const mouseData = visible.map(p => p.mouseSpeed);
+  if (_rpCharts.wpm)   { _rpCharts.wpm.data.labels   = labels; _rpCharts.wpm.data.datasets[0].data   = wpmData;   _rpCharts.wpm.update('none'); }
+  if (_rpCharts.kps)   { _rpCharts.kps.data.labels   = labels; _rpCharts.kps.data.datasets[0].data   = kpsData;   _rpCharts.kps.update('none'); }
+  if (_rpCharts.mouse) { _rpCharts.mouse.data.labels = labels; _rpCharts.mouse.data.datasets[0].data = mouseData; _rpCharts.mouse.update('none'); }
+  // Update stat numbers
+  if (visible.length > 0) {
+    const last = visible[visible.length - 1];
+    set('rp-stat-wpm', last.wpm);
+    set('rp-stat-kps', last.kps.toFixed(1));
+    const mouseEl = document.getElementById('rp-stat-mouse');
+    if (mouseEl) mouseEl.innerHTML = `${last.mouseSpeed} <span class="text-xs">px/s</span>`;
+  } else {
+    set('rp-stat-wpm', '—'); set('rp-stat-kps', '—');
+    const mouseEl = document.getElementById('rp-stat-mouse');
+    if (mouseEl) mouseEl.innerHTML = `— <span class="text-xs">px/s</span>`;
+  }
+}
+
 // ── RAF tick ───────────────────────────────────────────────────────
 function _tick(wallNow) {
   if (!_PL.playing || !_RP) return;
@@ -513,6 +609,7 @@ function _tick(wallNow) {
   if (kbDirty)    _renderKeyboard();
   if (mouseDirty) _drawMouseCanvas();
   _syncUI();
+  _updateReplayCharts(_PL.playhead);
   if (_PL.playhead >= _RP.duration) { _PL.playing = false; _updatePlayBtn(); return; }
   _PL.rafId = requestAnimationFrame(_tick);
 }
@@ -531,6 +628,7 @@ function _seek(seconds) {
   }
   _PL.evIdx = idx;
   _renderText(); _renderKeyboard(); _drawMouseCanvas(); _syncUI();
+  _updateReplayCharts(_PL.playhead);
   if (wasPlaying && _PL.playhead < _RP.duration) {
     _PL.playing = true; _PL.lastWall = performance.now();
     _PL.rafId = requestAnimationFrame(_tick);
@@ -600,6 +698,7 @@ async function loadReplay(sid) {
 
     const dur = data.duration ?? (events.length ? events[events.length-1].t : 0);
     _RP = { events, activity: data.activity, duration: Math.max(dur, 0.1), bbox };
+    _RP.timeSeries = _computeReplayTimeSeries(events, _RP.duration);
     _PL.playing = false; _PL.playhead = 0; _PL.evIdx = 0; _PL.lastWall = null;
     _resetVisual();
 
@@ -615,6 +714,8 @@ async function loadReplay(sid) {
 
     _renderText(); _renderKeyboard(); _drawMouseCanvas(); _syncUI(); _updatePlayBtn();
     show('replay-container');
+    _initReplayCharts();
+    _updateReplayCharts(0);
   } catch(e) {
     hide('replay-loading');
     showError('replay-error', 'Impossible de charger les événements : ' + e);
@@ -643,16 +744,97 @@ const _LIVE_FEED_COLORS = {
   move:        'text-gray-700',
 };
 
+// ── Live charts ────────────────────────────────────────────────────
+const _LIVE_WIN_S       = 10;   // sliding window width in seconds
+const _LIVE_CHART_MAX   = 30;   // max chart points kept
+
+function _initLiveCharts() {
+  if (_liveCharts) { Object.values(_liveCharts).forEach(c => c?.destroy()); }
+  const make = (id, color, label) => {
+    const canvas = document.getElementById(id);
+    if (!canvas) return null;
+    return new Chart(canvas.getContext('2d'), {
+      type: 'line',
+      data: { labels: [], datasets: [{ label, data: [], borderColor: color,
+        backgroundColor: color + '22', borderWidth: 2, pointRadius: 2, tension: 0.4, fill: true }] },
+      options: {
+        animation: false, responsive: true,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { display: false },
+          y: { min: 0, grid: { color: '#21262d' }, ticks: { color: '#8b949e', font: { size: 10 } } }
+        }
+      }
+    });
+  };
+  _liveCharts = {
+    wpm:   make('live-chart-wpm',   '#58a6ff', 'WPM'),
+    kps:   make('live-chart-kps',   '#d2a8ff', 'Touches/s'),
+    mouse: make('live-chart-mouse', '#2dd4bf', 'Vitesse souris'),
+  };
+}
+
+function _pushLiveChartPoint(nowTs) {
+  if (!_liveCharts) return;
+  const cutoff = nowTs - _LIVE_WIN_S;
+
+  // Trim buffers to keep only the last WIN seconds
+  while (_liveRecentPresses.length && _liveRecentPresses[0].ts < cutoff) _liveRecentPresses.shift();
+  while (_liveRecentMoves.length   && _liveRecentMoves[0].ts   < cutoff) _liveRecentMoves.shift();
+
+  // WPM: printable presses / 5 chars-per-word / (WIN/60 min)
+  const chars = _liveRecentPresses.length;
+  const wpm   = Math.round((chars / 5) / (_LIVE_WIN_S / 60));
+
+  // KPS
+  const kps = Math.round((_liveRecentPresses.length / _LIVE_WIN_S) * 10) / 10;
+
+  // Mouse speed
+  let mouseSpeed = 0;
+  if (_liveRecentMoves.length >= 2) {
+    let totalDist = 0, totalTime = 0;
+    for (let i = 1; i < _liveRecentMoves.length; i++) {
+      const dx = _liveRecentMoves[i].x - _liveRecentMoves[i-1].x;
+      const dy = _liveRecentMoves[i].y - _liveRecentMoves[i-1].y;
+      const dt = _liveRecentMoves[i].ts - _liveRecentMoves[i-1].ts;
+      if (dt > 0 && dt < 2) { totalDist += Math.sqrt(dx*dx + dy*dy); totalTime += dt; }
+    }
+    mouseSpeed = totalTime > 0 ? Math.round(totalDist / totalTime) : 0;
+  }
+
+  // Update stat numbers
+  set('live-stat-wpm', wpm);
+  set('live-stat-kps', kps.toFixed(1));
+  const mouseEl = document.getElementById('live-stat-mouse-speed');
+  if (mouseEl) mouseEl.innerHTML = `${mouseSpeed} <span class="text-xs">px/s</span>`;
+
+  // Push to charts
+  const label = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const pushChart = (c, val) => {
+    if (!c) return;
+    c.data.labels.push(label);
+    c.data.datasets[0].data.push(val);
+    if (c.data.labels.length > _LIVE_CHART_MAX) { c.data.labels.shift(); c.data.datasets[0].data.shift(); }
+    c.update('none');
+  };
+  pushChart(_liveCharts.wpm,   wpm);
+  pushChart(_liveCharts.kps,   kps);
+  pushChart(_liveCharts.mouse, mouseSpeed);
+}
+
+// ═══════════════════════════════════════════════════════════════════
 function openLive(sid) {
   stopLive();
   _liveSessionId   = sid;
   _liveSince       = 0;
   _liveKbCounts    = {};
   _liveKbLastPress  = {};
-  _liveTotalKeys   = 0;
-  _liveTotalClicks = 0;
-  _liveTotalMoves  = 0;
-  _liveStartedAt   = Date.now();
+  _liveTotalKeys     = 0;
+  _liveTotalClicks   = 0;
+  _liveTotalMoves    = 0;
+  _liveStartedAt     = Date.now();
+  _liveRecentPresses = [];
+  _liveRecentMoves   = [];
 
   set('live-session-label', `#${sid}`);
   set('live-stat-keys',     '0');
@@ -669,6 +851,9 @@ function openLive(sid) {
 
   // Build keyboard heatmap
   _buildKeyboardDOM('live-kb-container');
+
+  // Build charts
+  _initLiveCharts();
 
   switchTab('live');
 
@@ -700,6 +885,16 @@ async function _livePoll() {
       show('live-ended-badge');
       stopLive(/* keepUI */ true);
     }
+
+    // Feed sliding-window buffers (ts is epoch float in seconds)
+    const nowTs = data.since || (Date.now() / 1000);
+    for (const e of data.keyboard) {
+      if (e.type === 'key_press') _liveRecentPresses.push({ ts: e.ts });
+    }
+    for (const e of data.mouse) {
+      if (e.type === 'move') _liveRecentMoves.push({ ts: e.ts, x: e.x, y: e.y });
+    }
+    _pushLiveChartPoint(nowTs);
 
     // Accumulate counts
     const presses = data.keyboard.filter(e => e.type === 'key_press');
