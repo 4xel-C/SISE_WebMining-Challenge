@@ -10,6 +10,7 @@ from app.collector.keyboard_listener import KeyboardListener
 from app.collector.mouse_listener import MouseListener
 from app.models.schema import (
     Activity,
+    ActivityCategory,
     KeyboardEvent,
     MouseEvent,
     RecordingSession,
@@ -49,6 +50,7 @@ class RegisterService:
         self._flush_thread: threading.Thread | None = None
 
         self._recording_session_id: int | None = None
+        self._user_id: int | None = None
 
     def _init_session(self):
         """Crée ou récupère l'utilisateur, l'activité, et crée la RecordingSession."""
@@ -58,7 +60,10 @@ class RegisterService:
                 user = User(name=self.username)
                 session.add(user)
                 session.flush()
+            user.is_on_line = True
+            user.on_going_activity = ActivityCategory(self.activity_label)
             user_id = user.id
+            self._user_id = user_id
 
             activity = (
                 session.query(Activity).filter_by(label=self.activity_label).first()
@@ -156,6 +161,11 @@ class RegisterService:
             rec = session.get(RecordingSession, self._recording_session_id)
             if rec is not None:
                 rec.ending_at = time.time()
+            if self._user_id is not None:
+                user = session.get(User, self._user_id)
+                if user is not None:
+                    user.is_on_line = False
+                    user.on_going_activity = None
 
     def stop(self):
         """Arrête les listeners et attend le flush final."""

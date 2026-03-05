@@ -16,6 +16,12 @@ let _liveStartedAt    = null;
 
 // ── Tab helpers ────────────────────────────────────────────────────
 function switchTab(name) {
+  if (name === 'live' && !_liveTimer) {
+    const row = _selectedSessionId != null
+      ? document.querySelector(`.session-row[data-sid="${_selectedSessionId}"]`)
+      : null;
+    if (row?.dataset.ongoing === '1') { openLive(_selectedSessionId); return; }
+  }
   ['users', 'sessions', 'metrics', 'replay', 'live'].forEach(t => {
     document.getElementById(`tab-${t}`)?.classList.toggle('hidden', t !== name);
     const btn = document.getElementById(`tab-${t}-btn`);
@@ -115,8 +121,6 @@ function selectUser(uid, uname) {
   document.querySelectorAll('.user-row').forEach(r => {
     r.classList.toggle('selected', parseInt(r.dataset.uid) === uid);
   });
-  // Show live banner if this user has an ongoing session
-  _checkUserLiveBanner(uid);
   loadSessions(uid, uname);
   switchTab('sessions');
 }
@@ -177,6 +181,7 @@ function renderSessions(sessions) {
       (s.id === _selectedSessionId ? ' selected' : '') +
       (ongoing ? ' bg-green-950/20' : '');
     tr.dataset.sid = s.id;
+    tr.dataset.ongoing = ongoing ? '1' : '0';
 
     const durationCell = ongoing
       ? '<span class="inline-flex items-center gap-1 text-xs text-green-400"><span class="inline-block w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"></span>En cours</span>'
@@ -214,6 +219,9 @@ function selectSession(sid) {
   document.querySelectorAll('.session-row').forEach(r => {
     r.classList.toggle('selected', parseInt(r.dataset.sid) === sid);
   });
+  const row = document.querySelector(`.session-row[data-sid="${sid}"]`);
+  const liveBtn = document.getElementById('tab-live-btn');
+  if (liveBtn) liveBtn.classList.toggle('hidden', row?.dataset.ongoing !== '1' && _liveSessionId !== sid);
   loadMetrics(sid);
   switchTab('metrics');
 }
