@@ -1,11 +1,13 @@
 """SQLAlchemy ORM schema for the SISE Monitor application."""
 
 import enum
-import pathlib
+import os
 import time
 from contextlib import contextmanager
 from typing import Generator
 from urllib.parse import quote_plus
+
+from dotenv import load_dotenv
 
 from sqlalchemy import (
     Enum,
@@ -26,21 +28,12 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, rela
 
 def get_db_url() -> str:
     """Return the database URL from .env (PostgreSQL) or fall back to SQLite."""
-    _root = pathlib.Path(__file__).resolve().parent.parent.parent
-    _env: dict[str, str] = {}
-    _env_file = _root / ".env"
-    if _env_file.exists():
-        for _line in _env_file.read_text(encoding="utf-8").splitlines():
-            _line = _line.strip()
-            if not _line or _line.startswith("#") or "=" not in _line:
-                continue
-            _k, _, _v = _line.partition("=")
-            _env[_k.strip()] = _v.strip()
-    _user = _env.get("DB_USER")
-    _password = _env.get("DB_PASSWORD")
-    _host = _env.get("DB_HOST")
-    _port = _env.get("DB_PORT", "5432")
-    _name = _env.get("DB_NAME", "postgres")
+    load_dotenv()
+    _user = os.getenv("DB_USER")
+    _password = os.getenv("DB_PASSWORD")
+    _host = os.getenv("DB_HOST")
+    _port = os.getenv("DB_PORT", "5432")
+    _name = os.getenv("DB_NAME", "postgres")
     if _user and _password and _host:
         return (
             f"postgresql+psycopg2://{quote_plus(_user)}:{quote_plus(_password)}"
