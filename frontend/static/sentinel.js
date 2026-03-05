@@ -28,6 +28,9 @@ let _liveStartedAt    = null;
 let _usersCharts       = null;   // { sessions, time, donut, gantt canvas }
 let _usersAllSessions  = [];     // all sessions cache
 
+// ── Sessions charts state ──────────────────────────────────────────
+let _sessionsCharts    = {};     // { scatter, hist, hours, stacked, activity }
+
 // ── Tab helpers ────────────────────────────────────────────────────
 function switchTab(name) {
   if (name === 'live' && !_liveTimer && !_liveSessionId) {
@@ -174,7 +177,7 @@ async function loadSessions(uid, uname) {
   document.getElementById('sessions-user-label').textContent =
     uname ? `— ${uname}` : '';
   show('sessions-loading');
-  hide('sessions-error'); hide('sessions-table'); hide('sessions-empty');
+  hide('sessions-error'); hide('sessions-table'); hide('sessions-empty'); hide('sessions-charts');
   document.getElementById('sessions-loading').textContent = 'Chargement…';
 
   const url = uid != null
@@ -188,6 +191,8 @@ async function loadSessions(uid, uname) {
     if (!data.length) { show('sessions-empty'); return; }
     renderSessions(data);
     show('sessions-table');
+    _buildSessionsCharts(data);
+    show('sessions-charts');
   } catch(e) {
     hide('sessions-loading');
     showError('sessions-error', 'Impossible de contacter le serveur.');
@@ -490,6 +495,185 @@ function _drawUsersGantt(users, sessions) {
       }
     });
   });
+}
+
+// ── Sessions charts ───────────────────────────────────────────────
+function _buildSessionsCharts(sessions) {
+  // Destroy previous instances
+  Object.values(_sessionsCharts).forEach(c => c?.destroy?.());
+  _sessionsCharts = {};
+
+  if (!sessions || !sessions.length) { hide('sessions-charts'); return; }
+
+  const GREY = { bg: '#30363d', border: '#6e7681' };
+
+  // ── 1. Scatter: durée (min) vs frappes clavier ─────────────────
+  (() => {
+    const acts = ['coding', 'writing', 'gaming', null];
+    const labels = { coding: 'Coding', writing: 'Writing', gaming: 'Gaming', null: 'Inconnu' };
+    const datasets = acts.map(act => {
+      const pts = sessions
+        .filter(s => (s.activity ?? null) === act)
+        .map(s => ({ x: +(s.duration_s / 60).toFixed(2), y: s.keyboard_events }));
+      const col = _ACT_COLORS[act] || GREY;
+      return {
+        label: labels[act],
+        data: pts,
+        backgroundColor: col.bg + 'cc',
+        borderColor: col.border,
+        borderWidth: 1,
+        pointRadius: 5,
+        pointHoverRadius: 7,
+      };
+    }).filter(d => d.data.length > 0);
+
+    const el = document.getElementById('sess-chart-scatter');
+    if (!el) return;
+    _sessionsCharts.scatter = new Chart(el, {
+      type: 'scatter',
+      data: { datasets },
+      options: {
+        ...JSON.parse(JSON.stringify(_CHART_BASE_OPTS)),
+        plugins: { legend: { display: true, labels: { color: '#8b949e', font: { size: 10 } } } },
+        scales: {
+          x: { title: { display: true, text: 'Durée (min)', color: '#6e7681', font: { size: 10 } },
+               ticks: { color: '#6e7681' }, grid: { color: '#21262d' } },
+          y: { title: { display: true, text: 'Frappes clavier', color: '#6e7681', font: { size: 10 } },
+               ticks: { color: '#6e7681' }, grid: { color: '#21262d' } },
+        },
+      },
+    });
+  })();
+
+  // ── 2. Histogram: distribution des durées ──────────────────────
+  (() => {
+    const bins   = [[0,5],[5,10],[10,20],[20,30],[30,60],[60,Infinity]];
+    const labels = ['0-5 min','5-10 min','10-20 min','20-30 min','30-60 min','60+ min'];
+    const counts = bins.map(([lo, hi]) =>
+      sessions.filter(s => s.duration_s >= lo*60 && s.duration_s < hi*60).length
+    );
+    const el = document.getElementById('sess-chart-hist');
+    if (!el) return;
+    _sessionsCharts.hist = new Chart(el, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{ data: counts, backgroundColor: '#6e40c9cc', borderColor: '#d2a8ff', borderWidth: 1 }],
+      },
+      options: {
+        ...JSON.parse(JSON.stringify(_CHART_BASE_OPTS)),
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { color: '#6e7681', font: { size: 10 } }, grid: { color: '#21262d' } },
+          y: { ticks: { color: '#6e7681', stepSize: 1 }, grid: { color: '#21262d' }, beginAtZero: true },
+        },
+      },
+    });
+  })();
+
+  // ── 3. Bar grouped: average touches/s & souris/s per activity ──
+  (() => {
+    const acts = ['coding', 'writing', 'gaming'];
+    const actLabels = ['Coding', 'Writing', 'Gaming'];
+    const avgKPS = acts.map(act => {
+      const gr = sessions.filter(s => s.activity === act && s.duration_s > 0);
+      if (!gr.length) return 0;
+      return +(gr.reduce((a, s) => a + s.keyboard_events / s.duration_s, 0) / gr.length).toFixed(3);
+    });
+    const avgMPS = acts.map(act => {
+      const gr = sessions.filter(s => s.activity === act && s.duration_s > 0);
+      if (!gr.length) return 0;
+      return +(gr.reduce((a, s) => a + s.mouse_events / s.duration_s, 0) / gr.length).toFixed(3);
+    });
+    const el = document.getElementById('sess-chart-activity-bar');
+    if (!el) return;
+    _sessionsCharts.activity = new Chart(el, {
+      type: 'bar',
+      data: {
+        labels: actLabels,
+        datasets: [
+          { label: 'Touches/s', data: avgKPS, backgroundColor: '#1f6febcc', borderColor: '#58a6ff', borderWidth: 1 },
+          { label: 'Souris/s',  data: avgMPS, backgroundColor: '#238636cc', borderColor: '#3fb950', borderWidth: 1 },
+        ],
+      },
+      options: {
+        ...JSON.parse(JSON.stringify(_CHART_BASE_OPTS)),
+        plugins: { legend: { display: true, labels: { color: '#8b949e', font: { size: 10 } } } },
+        scales: {
+          x: { ticks: { color: '#6e7681' }, grid: { color: '#21262d' } },
+          y: { ticks: { color: '#6e7681' }, grid: { color: '#21262d' }, beginAtZero: true },
+        },
+      },
+    });
+  })();
+
+  // ── 4. Bar: sessions par heure de la journée ───────────────────
+  (() => {
+    const counts = new Array(24).fill(0);
+    sessions.forEach(s => {
+      if (!s.started_at) return;
+      const h = new Date(s.started_at * 1000).getHours();
+      counts[h]++;
+    });
+    const labels = Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2,'0')}h`);
+    const el = document.getElementById('sess-chart-hours');
+    if (!el) return;
+    _sessionsCharts.hours = new Chart(el, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{ data: counts, backgroundColor: '#388bfd80', borderColor: '#58a6ff', borderWidth: 1 }],
+      },
+      options: {
+        ...JSON.parse(JSON.stringify(_CHART_BASE_OPTS)),
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { color: '#6e7681', font: { size: 9 }, maxRotation: 0 }, grid: { color: '#21262d' } },
+          y: { ticks: { color: '#6e7681', stepSize: 1 }, grid: { color: '#21262d' }, beginAtZero: true },
+        },
+      },
+    });
+  })();
+
+  // ── 5. Stacked bar: coding/writing/gaming time per session ─────
+  (() => {
+    const mlSessions = sessions
+      .filter(s => (s.coding_time || 0) + (s.writing_time || 0) + (s.gaming_time || 0) > 0)
+      .slice(-20); // show latest 20 to keep readable
+    if (!mlSessions.length) return;
+
+    const labels = mlSessions.map(s => {
+      const d = new Date(s.started_at * 1000);
+      return d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }) + ' ' +
+             d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+    });
+    const coding  = mlSessions.map(s => +((s.coding_time  || 0) / 60).toFixed(1));
+    const writing = mlSessions.map(s => +((s.writing_time || 0) / 60).toFixed(1));
+    const gaming  = mlSessions.map(s => +((s.gaming_time  || 0) / 60).toFixed(1));
+
+    const el = document.getElementById('sess-chart-stacked');
+    if (!el) return;
+    _sessionsCharts.stacked = new Chart(el, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [
+          { label: 'Coding',  data: coding,  backgroundColor: '#1f6febcc', borderColor: '#58a6ff', borderWidth: 1 },
+          { label: 'Writing', data: writing, backgroundColor: '#238636cc', borderColor: '#3fb950', borderWidth: 1 },
+          { label: 'Gaming',  data: gaming,  backgroundColor: '#6e40c9cc', borderColor: '#d2a8ff', borderWidth: 1 },
+        ],
+      },
+      options: {
+        ...JSON.parse(JSON.stringify(_CHART_BASE_OPTS)),
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { stacked: true, ticks: { color: '#6e7681', font: { size: 8 }, maxRotation: 35 }, grid: { color: '#21262d' } },
+          y: { stacked: true, title: { display: true, text: 'min', color: '#6e7681', font: { size: 9 } },
+               ticks: { color: '#6e7681' }, grid: { color: '#21262d' }, beginAtZero: true },
+        },
+      },
+    });
+  })();
 }
 
 // ── DOM helpers ────────────────────────────────────────────────────

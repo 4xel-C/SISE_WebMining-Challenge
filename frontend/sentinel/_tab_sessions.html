@@ -33,4 +33,57 @@
   <div id="sessions-empty" class="hidden text-gray-600 text-sm italic mt-4">
     Aucune session pour cet utilisateur.
   </div>
+
+  <!-- ── Sessions charts ───────────────────────────────────── -->
+  <div id="sessions-charts" class="hidden mt-6 space-y-4">
+
+    <!-- Row 1 : scatter + histogram -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+      <div class="card p-4">
+        <div class="text-xs text-gray-500 uppercase tracking-widest mb-3">⌨️ Durée vs Frappes clavier</div>
+        <canvas id="sess-chart-scatter" style="max-height:200px"></canvas>
+        <div class="mt-2 flex items-center gap-3 text-xs text-gray-600 flex-wrap">
+          <span><span class="inline-block w-3 h-2 rounded mr-1" style="background:#1f6feb"></span>Coding</span>
+          <span><span class="inline-block w-3 h-2 rounded mr-1" style="background:#238636"></span>Writing</span>
+          <span><span class="inline-block w-3 h-2 rounded mr-1" style="background:#6e40c9"></span>Gaming</span>
+          <span><span class="inline-block w-3 h-2 rounded mr-1" style="background:#30363d"></span>Inconnu</span>
+        </div>
+      </div>
+
+      <div class="card p-4">
+        <div class="text-xs text-gray-500 uppercase tracking-widest mb-3">📊 Distribution des durées</div>
+        <canvas id="sess-chart-hist" style="max-height:200px"></canvas>
+      </div>
+
+    </div>
+
+    <!-- Row 2 : sessions par heure + stacked bar -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+      <div class="card p-4">
+        <div class="text-xs text-gray-500 uppercase tracking-widest mb-3">🕐 Sessions par heure de la journée</div>
+        <canvas id="sess-chart-hours" style="max-height:180px"></canvas>
+      </div>
+
+      <div class="card p-4">
+        <div class="text-xs text-gray-500 uppercase tracking-widest mb-3">🎯 Temps prédit par session (mode libre)</div>
+        <canvas id="sess-chart-stacked" style="max-height:180px"></canvas>
+        <div class="mt-2 flex items-center gap-3 text-xs text-gray-600">
+          <span><span class="inline-block w-3 h-2 rounded mr-1" style="background:#1f6feb"></span>Coding</span>
+          <span><span class="inline-block w-3 h-2 rounded mr-1" style="background:#238636"></span>Writing</span>
+          <span><span class="inline-block w-3 h-2 rounded mr-1" style="background:#6e40c9"></span>Gaming</span>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Row 3 : bar average KPS + WPM per activity -->
+    <div class="card p-4">
+      <div class="text-xs text-gray-500 uppercase tracking-widest mb-3">📈 Profil moyen par activité (touches/s &amp; événements souris/s)</div>
+      <canvas id="sess-chart-activity-bar" style="max-height:180px"></canvas>
+    </div>
+
+  </div>
+
 </section>
