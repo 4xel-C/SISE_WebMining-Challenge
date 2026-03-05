@@ -9,6 +9,7 @@ let _liveSessionId    = null;  // session currently watched live
 let _liveSince        = 0;     // timestamp cursor for incremental fetch
 let _liveTimer        = null;  // setInterval handle
 let _liveKbCounts     = {};    // key heatmap for live tab
+let _liveKbLastPress  = {};    // Date.now() of most recent press per key
 let _liveTotalKeys    = 0;
 let _liveTotalClicks  = 0;
 let _liveTotalMoves   = 0;
@@ -647,6 +648,7 @@ function openLive(sid) {
   _liveSessionId   = sid;
   _liveSince       = 0;
   _liveKbCounts    = {};
+  _liveKbLastPress  = {};
   _liveTotalKeys   = 0;
   _liveTotalClicks = 0;
   _liveTotalMoves  = 0;
@@ -706,9 +708,11 @@ async function _livePoll() {
     _liveTotalMoves  += data.mouse.filter(e => e.type === 'move').length;
 
     // Update keyboard heatmap
+    const now = Date.now();
     for (const e of presses) {
       const kid = _parseKeyId(e.key);
-      _liveKbCounts[kid] = (_liveKbCounts[kid] || 0) + 1;
+      _liveKbCounts[kid]    = (_liveKbCounts[kid] || 0) + 1;
+      _liveKbLastPress[kid] = now;
     }
     _renderLiveKeyboard();
 
@@ -761,23 +765,38 @@ function _appendLiveFeed(events) {
   while (feed.children.length > _LIVE_FEED_MAX) feed.lastChild.remove();
 }
 
+const _LIVE_KB_DECAY_S = 2; // seconds until a key fully fades
+
 function _renderLiveKeyboard() {
   const container = document.getElementById('live-kb-container');
   if (!container) return;
-  const max = Math.max(1, ...Object.values(_liveKbCounts));
+  const now = Date.now();
   container.querySelectorAll('.kb-key').forEach(el => {
-    const kid = el.dataset.kid, count = _liveKbCounts[kid] || 0;
-    const heat = count / max;
+    const kid   = el.dataset.kid;
+    const count = _liveKbCounts[kid] || 0;
     const cntEl = el.querySelector('.kb-cnt');
+    // Always show count when > 0
     if (cntEl) cntEl.textContent = count > 0 ? (count > 9999 ? Math.round(count/1000)+'k' : count) : '';
     if (count > 0) {
-      const r = Math.round(13+heat*75), g = Math.round(42+heat*124), b = Math.round(95+heat*160);
-      el.style.background = `rgb(${r},${g},${b})`; el.style.color = heat>.6?'#0d1117':'#c9d1d9';
-      el.style.borderColor = `rgb(${r},${g},${b})`; el.style.boxShadow = 'none';
+      const age  = (now - (_liveKbLastPress[kid] || 0)) / 1000;
+      const heat = Math.max(0, 1 - age / _LIVE_KB_DECAY_S);
+      if (heat > 0) {
+        const r = Math.round(13+heat*75), g = Math.round(42+heat*124), b = Math.round(95+heat*160);
+        el.style.background  = `rgb(${r},${g},${b})`;
+        el.style.color       = heat > 0.6 ? '#0d1117' : '#c9d1d9';
+        el.style.borderColor = `rgb(${r},${g},${b})`;
+      } else {
+        // Fully decayed: dark bg, dim text so the count remains readable
+        el.style.background  = '#21262d';
+        el.style.color       = '#6e7681';
+        el.style.borderColor = '#30363d';
+      }
     } else {
-      el.style.background = '#21262d'; el.style.color = '#484f58';
-      el.style.borderColor = '#30363d'; el.style.boxShadow = 'none';
+      el.style.background  = '#21262d';
+      el.style.color       = '#484f58';
+      el.style.borderColor = '#30363d';
     }
+    el.style.boxShadow = 'none';
   });
 }
 
