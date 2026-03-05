@@ -13,6 +13,7 @@ from sqlalchemy import (
     String,
     create_engine,
 )
+from sqlalchemy.pool import NullPool
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship
 
 
@@ -226,7 +227,10 @@ class MouseEvent(Base):
 
 
 def get_engine(db_url: str = "sqlite:///keysentinel.db"):
-    return create_engine(db_url, echo=False)
+    # NullPool: no connection reuse — every checkout opens a fresh SQLite
+    # connection, guaranteeing that concurrent writers (agent process) are
+    # always visible to readers (Flask process).
+    return create_engine(db_url, echo=False, poolclass=NullPool)
 
 
 def create_tables(db_url: str = "sqlite:///keysentinel.db"):

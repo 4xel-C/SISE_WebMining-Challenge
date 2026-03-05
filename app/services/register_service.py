@@ -83,9 +83,15 @@ class RegisterService:
         """Vide la queue et écrit les événements en base toutes les secondes."""
         while self._running:
             time.sleep(1.0)
-            self._flush()
+            try:
+                self._flush()
+            except Exception as exc:
+                print(f"[RegisterService] erreur flush : {exc}")
         # flush final après l'arrêt
-        self._flush()
+        try:
+            self._flush()
+        except Exception as exc:
+            print(f"[RegisterService] erreur flush final : {exc}")
 
     def _flush(self):
         events = []
