@@ -21,6 +21,7 @@ Le defi principal etait de concilier la rapidite de developpement avec la robust
 ---
 
 ## Apercu
+
 <img width="3010" height="1038" alt="image" src="https://github.com/user-attachments/assets/c22b78cb-ac50-4a26-810b-a030b0f6b376" />
 
 ---
@@ -100,22 +101,22 @@ KeySentinel
 
 ## Features extraites
 
-| Feature | Description |
-|---|---|
-| `keys_per_sec` | Nombre de touches par seconde |
-| `wpm` | Mots par minute (estimation) |
-| `mean_dwell` | Duree moyenne de maintien d'une touche (ms) |
-| `std_dwell` | Ecart-type du dwell time |
-| `mean_flight` | Temps moyen entre deux frappes (ms) |
-| `std_flight` | Ecart-type du flight time |
-| `special_key_ratio` | Ratio touches speciales (Ctrl, Alt, Shift, F1-F12...) |
-| `gaming_key_ratio` | Ratio touches gaming (WASD, fleches) |
-| `burst_count` | Nombre de pauses > 0.5s dans la frappe |
-| `pause_ratio` | Proportion du temps en pause |
-| `clicks_per_sec` | Clics souris par seconde |
-| `mean_move_speed` | Vitesse moyenne de deplacement souris (px/s) |
-| `scroll_events` | Nombre d'evenements de scroll |
-| `double_click_count` | Nombre de double-clics detectes |
+| Feature              | Description                                           |
+| -------------------- | ----------------------------------------------------- |
+| `keys_per_sec`       | Nombre de touches par seconde                         |
+| `wpm`                | Mots par minute (estimation)                          |
+| `mean_dwell`         | Duree moyenne de maintien d'une touche (ms)           |
+| `std_dwell`          | Ecart-type du dwell time                              |
+| `mean_flight`        | Temps moyen entre deux frappes (ms)                   |
+| `std_flight`         | Ecart-type du flight time                             |
+| `special_key_ratio`  | Ratio touches speciales (Ctrl, Alt, Shift, F1-F12...) |
+| `gaming_key_ratio`   | Ratio touches gaming (WASD, fleches)                  |
+| `burst_count`        | Nombre de pauses > 0.5s dans la frappe                |
+| `pause_ratio`        | Proportion du temps en pause                          |
+| `clicks_per_sec`     | Clics souris par seconde                              |
+| `mean_move_speed`    | Vitesse moyenne de deplacement souris (px/s)          |
+| `scroll_events`      | Nombre d'evenements de scroll                         |
+| `double_click_count` | Nombre de double-clics detectes                       |
 
 ---
 
@@ -145,6 +146,12 @@ cp .env.example .env
 
 ## Utilisation
 
+### Lancer le tout
+
+```bash
+uv run run.py
+```
+
 ### Lancer le serveur Flask
 
 ```bash
@@ -164,13 +171,12 @@ uv run python run_capture.py --user alice --activity coding
 
 ### Acceder aux interfaces
 
-| Interface | URL |
-|---|---|
-| Dashboard utilisateur | `http://localhost:5000/` |
-| Supervision Sentinel | `http://localhost:5000/sentinel` |
+| Interface             | URL                              |
+| --------------------- | -------------------------------- |
+| Dashboard utilisateur | `http://localhost:5000/`         |
+| Supervision Sentinel  | `http://localhost:5000/sentinel` |
 
 <img width="2224" height="1470" alt="image" src="https://github.com/user-attachments/assets/6e035c1a-0d60-43c8-a362-2f3e4386254d" />
-
 
 ---
 
@@ -204,15 +210,15 @@ La prediction tourne en **arriere-plan** toutes les 10 secondes et cumule le tem
 
 ## Stack technique
 
-| Composant | Technologie |
-|---|---|
-| Collecte evenements | `pynput` |
-| Serveur API | `Flask` |
-| ORM / BDD | `SQLAlchemy` + SQLite / PostgreSQL |
-| Machine Learning | `scikit-learn` (Random Forest) |
-| Feature engineering | `numpy` |
-| Frontend | HTML / CSS / JavaScript vanilla |
-| Packaging | `hatchling` + `uv` |
+| Composant           | Technologie                        |
+| ------------------- | ---------------------------------- |
+| Collecte evenements | `pynput`                           |
+| Serveur API         | `Flask`                            |
+| ORM / BDD           | `SQLAlchemy` + SQLite / PostgreSQL |
+| Machine Learning    | `scikit-learn` (Random Forest)     |
+| Feature engineering | `numpy`                            |
+| Frontend            | HTML / CSS / JavaScript vanilla    |
+| Packaging           | `hatchling` + `uv`                 |
 
 ---
 
