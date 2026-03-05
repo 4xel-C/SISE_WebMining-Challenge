@@ -46,10 +46,16 @@ def _server_cmd() -> list[str]:
 
 def main() -> None:
     # ── 1) Lancer Flask en subprocess ────────────────────────────────────────
+    log_path = os.path.join(
+        os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else ".",
+        "server.log",
+    )
+    log_file = open(log_path, "w", buffering=1)
+
     flask_proc = subprocess.Popen(
         _server_cmd(),
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=log_file,
+        stderr=log_file,
     )
 
     print("[run] Démarrage de Flask…", flush=True)

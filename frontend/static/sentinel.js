@@ -1538,6 +1538,126 @@ function stopLive(keepUI = false) {
 // ── Auto-refresh (15s) ────────────────────────────────────────────
 const _AUTO_REFRESH_S = 5;
 
+// Silent background patch for Users tab — no hide/show, only update changed cells
+async function _patchUsers() {
+  try {
+    const [resU, resS] = await Promise.all([
+      fetch('/api/sentinel/users'),
+      fetch('/api/sentinel/sessions'),
+    ]);
+    const users    = await resU.json();
+    const sessions = await resS.json();
+    if (!Array.isArray(users) || users.error) return;
+    _usersAllSessions = Array.isArray(sessions) ? sessions : [];
+
+    const tbody = document.getElementById('users-tbody');
+    if (!tbody) return;
+
+    const existingIds = new Set([...tbody.querySelectorAll('tr[data-uid]')].map(r => +r.dataset.uid));
+    const newIds      = new Set(users.map(u => u.id));
+    const listChanged = existingIds.size !== newIds.size || [...newIds].some(id => !existingIds.has(id));
+
+    if (listChanged) {
+      // Structure changed: full render (rare — new user registered)
+      renderUsers(users);
+      show('users-table'); hide('users-empty');
+      _buildUsersCharts(users, _usersAllSessions);
+      show('users-charts');
+      return;
+    }
+
+    // Patch only the cells that can change between polls
+    let dataChanged = false;
+    users.forEach(u => {
+      const tr = tbody.querySelector(`tr[data-uid="${u.id}"]`);
+      if (!tr) return;
+      const dot = u.is_on_line
+        ? '<span class="inline-block w-2 h-2 rounded-full dot-on mr-2"></span>En ligne'
+        : '<span class="inline-block w-2 h-2 rounded-full dot-off mr-2"></span>Hors ligne';
+      if (tr.cells[0].innerHTML !== dot) { tr.cells[0].innerHTML = dot; dataChanged = true; }
+      const badge = activityBadge(u.on_going_activity);
+      if (tr.cells[2].innerHTML !== badge) { tr.cells[2].innerHTML = badge; dataChanged = true; }
+      const cnt = String(u.session_count);
+      if (tr.cells[3].textContent !== cnt) { tr.cells[3].textContent = cnt; dataChanged = true; }
+    });
+
+    // Only rebuild charts when something actually changed
+    if (dataChanged) _buildUsersCharts(users, _usersAllSessions);
+  } catch (_) {}
+}
+
+// Silent background patch for Sessions tab — no hide/show, only update changed cells
+async function _patchSessions() {
+  try {
+    const uid = _selectedUserId;
+    const url = uid != null ? `/api/sentinel/sessions?user_id=${uid}` : '/api/sentinel/sessions';
+    const res  = await fetch(url);
+    const data = await res.json();
+    if (!Array.isArray(data) || data.error) return;
+
+    const tbody = document.getElementById('sessions-tbody');
+    if (!tbody || !tbody.querySelector('tr')) return; // table not yet rendered
+
+    const existingIds = new Set([...tbody.querySelectorAll('tr[data-sid]')].map(r => +r.dataset.sid));
+    const newIds      = new Set(data.map(s => s.id));
+    const listChanged = [...newIds].some(id => !existingIds.has(id)) ||
+                        [...existingIds].some(id => !newIds.has(id));
+
+    if (listChanged) {
+      // New/removed sessions: full render then rebuild charts
+      renderSessions(data);
+      _buildSessionsCharts(data);
+      return;
+    }
+
+    // Patch individual rows
+    let dataChanged = false;
+    data.forEach(s => {
+      const tr = tbody.querySelector(`tr[data-sid="${s.id}"]`);
+      if (!tr) return;
+      const wasOngoing = tr.dataset.ongoing === '1';
+      const isOngoing  = s.ending_at == null;
+
+      if (wasOngoing && !isOngoing) {
+        // Session just ended: rebuild just this row in-place
+        dataChanged = true;
+        tr.dataset.ongoing = '0';
+        tr.classList.remove('bg-green-950/20');
+        tr.cells[2].innerHTML = fmtDuration(s.duration_s);
+        tr.cells[5].innerHTML = `<div class="flex gap-3 justify-end">
+           <button class="text-xs text-purple-400 hover:text-purple-300"
+                   onclick="event.stopPropagation();selectSession(${s.id})">Métriques →</button>
+           <button class="text-xs text-blue-400 hover:text-blue-300"
+                   onclick="event.stopPropagation();openReplay(${s.id})">Replay →</button>
+         </div>`;
+        return;
+      }
+
+      // Update live counts (keyboard/mouse always increment for ongoing sessions)
+      const kb = s.keyboard_events.toLocaleString();
+      const ms = s.mouse_events.toLocaleString();
+      if (tr.cells[3].textContent !== kb) { tr.cells[3].textContent = kb; dataChanged = true; }
+      if (tr.cells[4].textContent !== ms) { tr.cells[4].textContent = ms; dataChanged = true; }
+      if (!isOngoing) {
+        const dur = fmtDuration(s.duration_s);
+        if (tr.cells[2].textContent !== dur) { tr.cells[2].innerHTML = dur; dataChanged = true; }
+      }
+    });
+
+    if (dataChanged) _buildSessionsCharts(data);
+  } catch (_) {}
+}
+
+// Silent patch for Metrics tab — just overwrite text nodes, no visibility change
+async function _patchMetrics(sid) {
+  try {
+    const res = await fetch(`/api/sentinel/session/${sid}/stats`);
+    const d   = await res.json();
+    if (d.error) return;
+    renderMetrics(d);
+  } catch (_) {}
+}
+
 function _autoRefresh() {
   const active = ['users','sessions','metrics','replay'].find(t =>
     !document.getElementById(`tab-${t}`)?.classList.contains('hidden')
@@ -1546,11 +1666,11 @@ function _autoRefresh() {
   const selectedOngoing = _selectedSessionId != null &&
     document.querySelector(`.session-row[data-sid="${_selectedSessionId}"]`)?.dataset.ongoing === '1';
   if (active === 'users') {
-    loadUsers();
+    _patchUsers();
   } else if (active === 'sessions') {
-    reloadSessions();
+    _patchSessions();
   } else if (active === 'metrics' && selectedOngoing) {
-    loadMetrics(_selectedSessionId);
+    _patchMetrics(_selectedSessionId);
   } else if (active === 'replay' && selectedOngoing && !_PL.playing) {
     loadReplay(_selectedSessionId);
   }
