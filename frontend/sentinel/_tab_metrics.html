@@ -1,0 +1,96 @@
+<!-- ── Tab: Métriques ──────────────────────────────────────────── -->
+<section id="tab-metrics" class="tab-panel hidden">
+  <div class="flex items-center gap-3 mb-4">
+    <h2 class="text-sm text-gray-500 uppercase tracking-widest">Métriques de session</h2>
+    <span id="metrics-session-label" class="text-xs text-blue-400"></span>
+  </div>
+
+  <div id="metrics-empty" class="text-gray-600 text-sm italic">
+    Sélectionner une session pour afficher ses métriques.
+  </div>
+  <div id="metrics-error"   class="hidden text-red-400 text-sm"></div>
+  <div id="metrics-loading" class="hidden text-gray-600 text-sm italic">Chargement…</div>
+
+  <div id="metrics-content" class="hidden">
+
+    <!-- Top stats -->
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-5">
+      <div class="card p-4 flex flex-col items-center gap-1">
+        <div class="text-xs text-gray-500 uppercase tracking-widest">Durée</div>
+        <div id="m-duration" class="text-2xl font-bold text-purple-400">—</div>
+      </div>
+      <div class="card p-4 flex flex-col items-center gap-1">
+        <div class="text-xs text-gray-500 uppercase tracking-widest">Clavier</div>
+        <div id="m-kb" class="text-2xl font-bold text-blue-400">—</div>
+      </div>
+      <div class="card p-4 flex flex-col items-center gap-1">
+        <div class="text-xs text-gray-500 uppercase tracking-widest">Souris</div>
+        <div id="m-mouse" class="text-2xl font-bold text-teal-400">—</div>
+      </div>
+      <div class="card p-4 flex flex-col items-center gap-1">
+        <div class="text-xs text-gray-500 uppercase tracking-widest">Clics</div>
+        <div id="m-clicks" class="text-2xl font-bold text-green-400">—</div>
+      </div>
+    </div>
+
+    <!-- Keyboard timing + activity breakdown -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5">
+      <div class="card p-4">
+        <div class="text-xs text-gray-500 uppercase tracking-widest mb-3">Frappe clavier</div>
+        <div class="flex flex-col gap-3">
+          <div class="flex justify-between text-sm">
+            <span class="text-gray-400">Dwell moyen <span class="text-gray-600">(maintien)</span></span>
+            <span id="m-dwell" class="font-bold text-blue-300">—</span>
+          </div>
+          <div class="flex justify-between text-sm">
+            <span class="text-gray-400">Flight moyen <span class="text-gray-600">(inter-touches)</span></span>
+            <span id="m-flight" class="font-bold text-purple-300">—</span>
+          </div>
+          <div class="flex justify-between text-sm">
+            <span class="text-gray-400">Vitesse souris moy.</span>
+            <span id="m-speed" class="font-bold text-teal-300">—</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card p-4">
+        <div class="text-xs text-gray-500 uppercase tracking-widest mb-3">Répartition du temps</div>
+        <div class="flex flex-col gap-3">
+          <div>
+            <div class="flex justify-between text-xs mb-1">
+              <span class="text-blue-400">Coding</span>
+              <span id="m-coding-val" class="text-gray-400">—</span>
+            </div>
+            <div class="bg-gray-800 rounded-full h-2">
+              <div id="m-coding-bar" class="h-2 rounded-full bg-blue-500 transition-all duration-500" style="width:0%"></div>
+            </div>
+          </div>
+          <div>
+            <div class="flex justify-between text-xs mb-1">
+              <span class="text-green-400">Writing</span>
+              <span id="m-writing-val" class="text-gray-400">—</span>
+            </div>
+            <div class="bg-gray-800 rounded-full h-2">
+              <div id="m-writing-bar" class="h-2 rounded-full bg-green-500 transition-all duration-500" style="width:0%"></div>
+            </div>
+          </div>
+          <div>
+            <div class="flex justify-between text-xs mb-1">
+              <span class="text-purple-400">Gaming</span>
+              <span id="m-gaming-val" class="text-gray-400">—</span>
+            </div>
+            <div class="bg-gray-800 rounded-full h-2">
+              <div id="m-gaming-bar" class="h-2 rounded-full bg-purple-500 transition-all duration-500" style="width:0%"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Session UUID -->
+    <div class="card p-3 text-xs text-gray-600">
+      UUID : <span id="m-uuid" class="text-gray-500 font-mono select-all"></span>
+    </div>
+
+  </div>
+</section>

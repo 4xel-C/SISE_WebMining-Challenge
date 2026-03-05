@@ -1,0 +1,36 @@
+<!-- ── Tab: Sessions ───────────────────────────────────────────── -->
+<section id="tab-sessions" class="tab-panel hidden">
+  <div class="flex items-center justify-between mb-4">
+    <div class="flex items-center gap-3">
+      <h2 class="text-sm text-gray-500 uppercase tracking-widest">Sessions</h2>
+      <span id="sessions-user-label" class="text-xs text-purple-400"></span>
+    </div>
+    <button onclick="reloadSessions()"
+            class="text-xs text-gray-600 hover:text-blue-400 transition-colors">
+      ↻ Rafraîchir
+    </button>
+  </div>
+
+  <div id="sessions-loading" class="text-gray-600 text-sm italic">Sélectionner un utilisateur pour afficher ses sessions.</div>
+  <div id="sessions-error"   class="hidden text-red-400 text-sm"></div>
+
+  <div id="sessions-table" class="hidden card overflow-hidden">
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="text-xs text-gray-500 uppercase tracking-widest border-b border-gray-800">
+          <th class="px-4 py-3 text-left">Date / Heure</th>
+          <th class="px-4 py-3 text-left">Activité</th>
+          <th class="px-4 py-3 text-right">Durée</th>
+          <th class="px-4 py-3 text-right">Clavier</th>
+          <th class="px-4 py-3 text-right">Souris</th>
+          <th class="px-4 py-3 text-right">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="sessions-tbody"></tbody>
+    </table>
+  </div>
+
+  <div id="sessions-empty" class="hidden text-gray-600 text-sm italic mt-4">
+    Aucune session pour cet utilisateur.
+  </div>
+</section>

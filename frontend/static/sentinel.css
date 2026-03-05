@@ -1,0 +1,49 @@
+/* ── KeySentinel — Sentinel mode styles ─────────────────────────── */
+
+body { background: #0d1117; color: #c9d1d9; }
+
+.card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; }
+
+/* Tabs */
+.tab-btn { transition: color .15s, border-color .15s; }
+.tab-btn.active { color: #bc8cff; border-bottom-color: #bc8cff; }
+.tab-btn:not(.active) { color: #8b949e; border-bottom-color: transparent; }
+.tab-btn:not(.active):hover { color: #c9d1d9; }
+
+/* Table rows */
+.user-row { transition: background .1s; cursor: pointer; }
+.user-row:hover { background: rgba(188,140,255,.07); }
+.user-row.selected { background: rgba(188,140,255,.13); border-left: 3px solid #bc8cff; }
+
+.session-row { transition: background .1s; cursor: pointer; }
+.session-row:hover { background: rgba(88,166,255,.07); }
+.session-row.selected { background: rgba(88,166,255,.12); border-left: 3px solid #58a6ff; }
+
+/* Activity badges */
+.badge-coding  { background: #0d2a4a; color: #58a6ff; border: 1px solid #1f6feb; }
+.badge-writing { background: #0d4a1f; color: #3fb950; border: 1px solid #238636; }
+.badge-gaming  { background: #3d1a6e; color: #d2a8ff; border: 1px solid #8957e5; }
+.badge-train   { background: #2a1a00; color: #f0883e; border: 1px solid #9a4a00; }
+.badge-unknown { background: #21262d; color: #8b949e; border: 1px solid #30363d; }
+
+/* Online dots */
+.dot-on  { background: #3fb950; }
+.dot-off { background: #6e7681; }
+
+/* Replay — speed buttons */
+.rspd {
+  background: #21262d; color: #8b949e;
+  border: 1px solid #30363d;
+  padding: 0 8px; height: 28px; border-radius: 4px;
+  font-size: 11px; font-family: monospace;
+  transition: all .1s; cursor: pointer;
+}
+.rspd.active { background: #3d1a6e; color: #d2a8ff; border-color: #8957e5; }
+.rspd:hover:not(.active) { background: #30363d; color: #c9d1d9; }
+
+/* Replay — keyboard heatmap */
+.kb-key { transition: background .12s, color .12s, box-shadow .12s; cursor: default; }
+
+/* Replay — blinking caret */
+.replay-caret::after { content: '│'; animation: rp-blink 1s step-end infinite; }
+@keyframes rp-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }

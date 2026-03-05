@@ -1,0 +1,32 @@
+<!-- ── Tab: Utilisateurs ───────────────────────────────────────── -->
+<section id="tab-users" class="tab-panel">
+  <div class="flex items-center justify-between mb-4">
+    <h2 class="text-sm text-gray-500 uppercase tracking-widest">Utilisateurs enregistrés</h2>
+    <button onclick="loadUsers()"
+            class="text-xs text-gray-600 hover:text-purple-400 transition-colors">
+      ↻ Rafraîchir
+    </button>
+  </div>
+
+  <div id="users-loading" class="text-gray-600 text-sm italic">Chargement…</div>
+  <div id="users-error"   class="hidden text-red-400 text-sm"></div>
+
+  <div id="users-table" class="hidden card overflow-hidden">
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="text-xs text-gray-500 uppercase tracking-widest border-b border-gray-800">
+          <th class="px-4 py-3 text-left">Statut</th>
+          <th class="px-4 py-3 text-left">Utilisateur</th>
+          <th class="px-4 py-3 text-left">Activité en cours</th>
+          <th class="px-4 py-3 text-right">Sessions</th>
+          <th class="px-4 py-3 text-right">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="users-tbody"></tbody>
+    </table>
+  </div>
+
+  <div id="users-empty" class="hidden text-gray-600 text-sm italic mt-4">
+    Aucun utilisateur dans la base de données.
+  </div>
+</section>

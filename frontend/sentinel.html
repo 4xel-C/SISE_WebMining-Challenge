@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>KeySentinel — Mode Sentinel</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="/static/sentinel.css" />
+</head>
+<body class="min-h-screen font-mono">
+
+  {% include 'sentinel/_header.html' %}
+  {% include 'sentinel/_tabnav.html' %}
+
+  <main class="p-6 max-w-6xl mx-auto">
+
+    {% include 'sentinel/_tab_users.html' %}
+    {% include 'sentinel/_tab_sessions.html' %}
+    {% include 'sentinel/_tab_metrics.html' %}
+    {% include 'sentinel/_tab_replay.html' %}
+  </main>
+
+  <script src="/static/sentinel.js"></script>
+</body>
+</html>

@@ -1,0 +1,113 @@
+<!-- ── Tab: Replay ─────────────────────────────────────────────── -->
+<section id="tab-replay" class="tab-panel hidden">
+  <div class="flex items-center justify-between mb-4">
+    <div class="flex items-center gap-3">
+      <h2 class="text-sm text-gray-500 uppercase tracking-widest">Replay</h2>
+      <span id="replay-session-label" class="text-xs text-blue-400"></span>
+      <span id="replay-activity-badge"></span>
+    </div>
+  </div>
+
+  <div id="replay-empty"   class="text-gray-600 text-sm italic">Sélectionner une session dans l'onglet Sessions pour afficher le replay.</div>
+  <div id="replay-loading" class="hidden text-gray-600 text-sm italic">Chargement des événements…</div>
+  <div id="replay-error"   class="hidden text-red-400 text-sm"></div>
+
+  <!-- Player wrapper — shown once data is loaded -->
+  <div id="replay-container" class="hidden">
+
+    <!-- Controls bar -->
+    <div class="card p-3 mb-4">
+      <div class="flex flex-wrap items-center gap-2 mb-2">
+        <button onclick="playerReset()"
+                class="w-8 h-8 rounded bg-gray-800 hover:bg-gray-700 text-sm transition-colors flex items-center justify-center"
+                title="Revenir au début">⏮</button>
+        <button id="replay-play-btn" onclick="playerToggle()"
+                class="flex items-center gap-1 px-3 h-8 rounded bg-purple-900 hover:bg-purple-800 text-purple-200 text-sm font-semibold transition-colors">
+          ▶ Lire
+        </button>
+        <div class="flex gap-1">
+          <button class="rspd active" data-speed="1"  onclick="setSpeed(1)">1×</button>
+          <button class="rspd"        data-speed="2"  onclick="setSpeed(2)">2×</button>
+          <button class="rspd"        data-speed="5"  onclick="setSpeed(5)">5×</button>
+          <button class="rspd"        data-speed="10" onclick="setSpeed(10)">10×</button>
+        </div>
+        <span class="ml-auto text-xs font-mono text-gray-400">
+          <span id="rp-time-cur">0:00</span><span class="text-gray-600"> / </span><span id="rp-time-dur">0:00</span>
+        </span>
+      </div>
+      <input type="range" id="rp-scrubber" min="0" max="10000" value="0" step="1"
+             class="w-full cursor-pointer accent-purple-500"
+             oninput="playerScrub(this.value)"
+             onmousedown="_scrubbing=true" onmouseup="_scrubbing=false;playerScrub(this.value)"
+             ontouchstart="_scrubbing=true" ontouchend="_scrubbing=false" />
+    </div>
+
+    <!-- Writing view (grid: text 2/3, mouse 1/3) -->
+    <div id="replay-view-writing" style="display:none;grid-template-columns:2fr 1fr;gap:1rem">
+      <div class="card overflow-hidden">
+        <div class="px-4 py-2 border-b border-gray-200/10 bg-gray-100/5 text-xs text-gray-400">📝 Word</div>
+        <div style="background:#fefefe;border-radius:0 0 12px 12px;padding:2rem 2.5rem;min-height:280px">
+          <div id="replay-writing-area" class="replay-caret"
+               style="font-family:'Georgia',serif;font-size:15px;line-height:2;color:#1a1a2e;white-space:pre-wrap;word-break:break-word"></div>
+        </div>
+      </div>
+      <div class="card p-3">
+        <div class="text-xs text-gray-500 uppercase tracking-widest mb-2">🖱️ Souris</div>
+        <canvas id="replay-mouse-writing" width="320" height="260"
+                style="background:#0d1117;border-radius:6px;width:100%;max-width:320px;display:block;margin:0 auto"></canvas>
+        <div class="mt-2 flex items-center gap-3 text-xs text-gray-600 justify-center">
+          <span><span class="inline-block w-2 h-2 rounded-full mr-1" style="background:#3fb950"></span>Gauche</span>
+          <span><span class="inline-block w-2 h-2 rounded-full mr-1" style="background:#f85149"></span>Droit</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Coding view (grid: code 2/3, mouse 1/3) -->
+    <div id="replay-view-coding" style="display:none;grid-template-columns:2fr 1fr;gap:1rem">
+      <div class="card overflow-hidden">
+        <div class="flex items-center gap-2 px-4 py-2 border-b border-gray-700" style="background:#12121f">
+          <span class="w-3 h-3 rounded-full" style="background:#f85149;display:inline-block"></span>
+          <span class="w-3 h-3 rounded-full" style="background:#f0883e;display:inline-block"></span>
+          <span class="w-3 h-3 rounded-full" style="background:#3fb950;display:inline-block"></span>
+          <span class="text-xs text-gray-500 ml-2">💻 VSCode</span>
+        </div>
+        <pre id="replay-coding-area" class="replay-caret"
+             style="font-family:'Consolas','Fira Code',monospace;font-size:13px;line-height:1.8;background:#1e1e2e;color:#cdd6f4;padding:1.25rem;overflow:auto;max-height:400px;min-height:120px;margin:0;white-space:pre-wrap;word-break:break-word"></pre>
+      </div>
+      <div class="card p-3">
+        <div class="text-xs text-gray-500 uppercase tracking-widest mb-2">🖱️ Souris</div>
+        <canvas id="replay-mouse-coding" width="320" height="260"
+                style="background:#0d1117;border-radius:6px;width:100%;max-width:320px;display:block;margin:0 auto"></canvas>
+        <div class="mt-2 flex items-center gap-3 text-xs text-gray-600 justify-center">
+          <span><span class="inline-block w-2 h-2 rounded-full mr-1" style="background:#3fb950"></span>Gauche</span>
+          <span><span class="inline-block w-2 h-2 rounded-full mr-1" style="background:#f85149"></span>Droit</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Gaming / fallback view -->
+    <div id="replay-view-gaming" style="display:none">
+      <div class="card p-4 mb-4">
+        <div class="text-xs text-gray-500 uppercase tracking-widest mb-3">⌨️ Clavier</div>
+        <div id="replay-kb-container" class="overflow-x-auto"></div>
+        <div class="mt-2 flex items-center gap-3 text-xs text-gray-600">
+          <span class="w-5 h-3 rounded inline-block" style="background:#21262d;border:1px solid #30363d"></span>Inactif
+          <span class="w-5 h-3 rounded inline-block ml-1" style="background:#1f3a60"></span>Faible
+          <span class="w-5 h-3 rounded inline-block" style="background:#58a6ff"></span>Élevé
+          <span class="ml-2" style="background:#3d1a6e;color:#d2a8ff;padding:0 6px;border-radius:4px;border:1px solid #8957e5">Pressée ✦</span>
+        </div>
+      </div>
+      <div class="card p-4">
+        <div class="text-xs text-gray-500 uppercase tracking-widest mb-3">🖱️ Mouvements souris</div>
+        <canvas id="replay-mouse-gaming" width="680" height="340"
+                style="background:#0d1117;border-radius:6px;width:100%;max-width:680px;display:block;margin:0 auto"></canvas>
+        <div class="mt-2 flex items-center gap-4 text-xs text-gray-600 justify-center">
+          <span><span class="inline-block w-2 h-2 rounded-full mr-1" style="background:#3fb950"></span>Clic gauche</span>
+          <span><span class="inline-block w-2 h-2 rounded-full mr-1" style="background:#f85149"></span>Clic droit</span>
+          <span style="color:rgba(88,166,255,.6)">── Trajectoire</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
