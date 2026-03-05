@@ -1,9 +1,11 @@
 """SQLAlchemy ORM schema for the SISE Monitor application."""
 
 import enum
+import pathlib
 import time
 from contextlib import contextmanager
 from typing import Generator
+from urllib.parse import quote_plus
 
 from sqlalchemy import (
     Enum,
@@ -17,11 +19,43 @@ from sqlalchemy.pool import NullPool
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship
 
 
+# ---------------------------------------------------------------------------
+# DB URL helper — reads .env at project root, prefers PostgreSQL when available
+# ---------------------------------------------------------------------------
+
+
+def get_db_url() -> str:
+    """Return the database URL from .env (PostgreSQL) or fall back to SQLite."""
+    _root = pathlib.Path(__file__).resolve().parent.parent.parent
+    _env: dict[str, str] = {}
+    _env_file = _root / ".env"
+    if _env_file.exists():
+        for _line in _env_file.read_text(encoding="utf-8").splitlines():
+            _line = _line.strip()
+            if not _line or _line.startswith("#") or "=" not in _line:
+                continue
+            _k, _, _v = _line.partition("=")
+            _env[_k.strip()] = _v.strip()
+    _user = _env.get("DB_USER")
+    _password = _env.get("DB_PASSWORD")
+    _host = _env.get("DB_HOST")
+    _port = _env.get("DB_PORT", "5432")
+    _name = _env.get("DB_NAME", "postgres")
+    if _user and _password and _host:
+        return (
+            f"postgresql+psycopg2://{quote_plus(_user)}:{quote_plus(_password)}"
+            f"@{_host}:{_port}/{_name}"
+        )
+    return "sqlite:///keysentinel.db"
+
+
+_DB_URL: str = get_db_url()
+
+
 class ActivityCategory(enum.Enum):
     coding = "coding"
     writing = "writing"
     gaming = "gaming"
-    train = "train"
 
 
 class Base(DeclarativeBase):
@@ -226,14 +260,14 @@ class MouseEvent(Base):
 # ---------------------------------------------------------------------------
 
 
-def get_engine(db_url: str = "sqlite:///keysentinel.db"):
-    # NullPool: no connection reuse — every checkout opens a fresh SQLite
-    # connection, guaranteeing that concurrent writers (agent process) are
-    # always visible to readers (Flask process).
-    return create_engine(db_url, echo=False, poolclass=NullPool)
+def get_engine(db_url: str | None = None):
+    # NullPool: no connection reuse — every checkout opens a fresh connection,
+    # guaranteeing that concurrent writers (agent process) are always visible
+    # to readers (Flask process).
+    return create_engine(db_url or _DB_URL, echo=False, poolclass=NullPool)
 
 
-def create_tables(db_url: str = "sqlite:///keysentinel.db"):
+def create_tables(db_url: str | None = None):
     """Create all tables in the target database (idempotent)."""
     engine = get_engine(db_url)
     Base.metadata.create_all(engine)
@@ -242,7 +276,7 @@ def create_tables(db_url: str = "sqlite:///keysentinel.db"):
 
 @contextmanager
 def get_session(
-    db_url: str = "sqlite:///keysentinel.db",
+    db_url: str | None = None,
 ) -> Generator[Session, None, None]:
     """
     Context manager that yields an open Session and handles commit/rollback/close.
@@ -251,7 +285,7 @@ def get_session(
         with get_session() as session:
             session.add(...)
     """
-    engine = get_engine(db_url)
+    engine = get_engine(db_url or _DB_URL)
     session = Session(engine)
     try:
         yield session

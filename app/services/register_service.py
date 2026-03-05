@@ -15,6 +15,7 @@ from app.models.schema import (
     MouseEvent,
     RecordingSession,
     User,
+    _DB_URL,
     create_tables,
     get_session,
 )
@@ -35,12 +36,12 @@ class RegisterService:
         self,
         username: str,
         activity_label: Literal["coding", "writing", "gaming", "train"],
-        db_url: str = "sqlite:///keysentinel.db",
+        db_url: str | None = None,
         session_id: str | None = None,
     ):
         self.username = username
         self.activity_label = activity_label
-        self.db_url = db_url
+        self.db_url = db_url or _DB_URL
         self.session_id = session_id or str(uuid.uuid4())
 
         self._event_queue: queue.Queue = queue.Queue()

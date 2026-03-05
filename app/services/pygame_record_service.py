@@ -8,6 +8,7 @@ from app.models.schema import (
     KeyboardEvent,
     RecordingSession,
     User,
+    _DB_URL,
     create_tables,
     get_session,
 )
@@ -32,12 +33,12 @@ class PygameRecordService:
         self,
         username: str,
         activity_label: str,
-        db_url: str = "sqlite:///keysentinel.db",
+        db_url: str | None = None,
         session_id: str | None = None,
     ):
         self.username = username
         self.activity_label = activity_label
-        self.db_url = db_url
+        self.db_url = db_url or _DB_URL
         self.session_id = session_id or str(uuid.uuid4())
 
         self._recording_session_id: int | None = None
@@ -97,9 +98,11 @@ class PygameRecordService:
                     event_type="key_press",
                     key=key_name,
                     timestamp=now,
-                    flight_time=(now - self._last_release_time)
-                    if self._last_release_time
-                    else None,
+                    flight_time=(
+                        (now - self._last_release_time)
+                        if self._last_release_time
+                        else None
+                    ),
                     dwell=None,
                 )
             )
