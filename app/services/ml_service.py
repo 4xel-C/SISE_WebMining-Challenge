@@ -29,11 +29,15 @@ def _convert(store_events: list[dict]) -> list[dict]:
             if etype == "press":
                 flight = ts - last_release_ts[key] if key in last_release_ts else None
                 press_ts[key] = ts
-                out.append({"type": "key_press", "time": ts, "key": key, "flight_time": flight})
+                out.append(
+                    {"type": "key_press", "time": ts, "key": key, "flight_time": flight}
+                )
             elif etype == "release":
                 dwell = ts - press_ts[key] if key in press_ts else None
                 last_release_ts[key] = ts
-                out.append({"type": "key_release", "time": ts, "key": key, "dwell": dwell})
+                out.append(
+                    {"type": "key_release", "time": ts, "key": key, "dwell": dwell}
+                )
 
         elif ev["type"] == "mouse":
             if etype == "move":
@@ -56,12 +60,50 @@ def _convert(store_events: list[dict]) -> list[dict]:
 
 
 def predict(store_events: list[dict]) -> dict:
-    empty = {"activity": None, "confidence": None,
-             "probabilities": {"coding": None, "writing": None, "gaming": None}}
+    empty = {
+        "activity": None,
+        "confidence": None,
+        "probabilities": {"coding": None, "writing": None, "gaming": None},
+    }
     if _model is None or len(store_events) < 5:
         return empty
     converted = _convert(store_events)
     features = extract_features(converted, window_size=10.0)
+    X = np.array([[features[f] for f in _model.feature_names_in_]])
+    probs = _model.predict_proba(X)[0]
+    classes = list(_model.classes_)
+    prob_dict = {c: round(float(p), 3) for c, p in zip(classes, probs)}
+    best = classes[int(np.argmax(probs))]
+    return {
+        "activity": best,
+        "confidence": round(float(max(probs)), 3),
+        "probabilities": prob_dict,
+    }
+
+
+def predict_from_events(
+    kb_events: list[dict],
+    ms_events: list[dict],
+    window_size: float = 10.0,
+) -> dict:
+    """
+    Run prediction from already-converted FeatureService events.
+
+    kb_events / ms_events come from FeatureService._fetch_keyboard/_fetch_mouse
+    and already have the correct field names (type, key, time, dwell, flight_time,
+    speed, x, y) expected by extract_features().
+    """
+    empty = {
+        "activity": None,
+        "confidence": None,
+        "probabilities": {"coding": None, "writing": None, "gaming": None},
+    }
+    if _model is None:
+        return empty
+    all_events = kb_events + ms_events
+    if len(all_events) < 5:
+        return empty
+    features = extract_features(all_events, window_size=window_size)
     X = np.array([[features[f] for f in _model.feature_names_in_]])
     probs = _model.predict_proba(X)[0]
     classes = list(_model.classes_)

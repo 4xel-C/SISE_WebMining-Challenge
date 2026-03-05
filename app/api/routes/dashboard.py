@@ -1,11 +1,18 @@
 """
 Dashboard routes — GET only, consumed by frontend/index.html.
 
-Reads live data directly from keysentinel.db (SQLite via SQLAlchemy).
+Reads live data directly from the database (SQLAlchemy).
 Active session = most recent RecordingSession with ending_at IS NULL.
+
+Background prediction loop (every 10 s):
+  - Extracts features from the last 10 s of events for the active session.
+  - Runs the Random Forest model to get activity probabilities.
+  - Increments coding_time / writing_time / gaming_time on the session row.
+  - Caches the last prediction so /api/predict/live is instant (no DB query).
 """
 
 import math
+import threading
 import time
 
 from flask import Blueprint, jsonify, request
@@ -14,6 +21,7 @@ from app.models.schema import (
     KeyboardEvent,
     MouseEvent,
     RecordingSession,
+    _DB_URL,
     get_session,
 )
 
@@ -21,6 +29,78 @@ dashboard = Blueprint("dashboard", __name__)
 
 _GAMING_KEYS = {"w", "a", "s", "d", "Key.up", "Key.down", "Key.left", "Key.right"}
 _WINDOW_S = 10.0  # sliding window for live features
+_PREDICT_INTERVAL = 10.0  # seconds between background predictions
+
+# ---------------------------------------------------------------------------
+# Background prediction state (written by bg thread, read by /api/predict/live)
+# ---------------------------------------------------------------------------
+_pred_lock = threading.Lock()
+_last_pred: dict = {
+    "activity": None,
+    "confidence": None,
+    "probabilities": {"coding": None, "writing": None, "gaming": None},
+}
+
+
+def _run_prediction_loop():
+    """Background thread: predict every 10 s and accumulate activity time in DB."""
+    # Lazy imports to avoid circular deps at module load time
+    from app.services.feature_service import FeatureService
+    from app.services.ml_service import load_model, predict_from_events
+
+    load_model()
+    feat_svc = FeatureService(db_url=_DB_URL)
+
+    while True:
+        time.sleep(_PREDICT_INTERVAL)
+        try:
+            # 1. Find the active session and its user
+            with get_session() as db:
+                sess = _active_session(db)
+                if sess is None:
+                    continue
+                session_id = sess.id
+                username = sess.user.name if sess.user else None
+
+            if not username:
+                continue
+
+            # 2. Fetch last 10 s of events and run model
+            kb, ms = feat_svc.fetch_events(username, window_size=_PREDICT_INTERVAL)
+            result = predict_from_events(kb, ms, window_size=_PREDICT_INTERVAL)
+
+            # 3. Cache prediction for /api/predict/live
+            with _pred_lock:
+                _last_pred.update(result)
+
+            if result["activity"] is None:
+                continue
+
+            # 4. Increment the correct time bucket on the session row
+            activity = result["activity"]
+            with get_session() as db:
+                rec = db.get(RecordingSession, session_id)
+                if rec is not None and rec.ending_at is None:
+                    if activity == "coding":
+                        rec.coding_time = (
+                            rec.coding_time or 0.0
+                        ) + _PREDICT_INTERVAL / 60
+                    elif activity == "writing":
+                        rec.writing_time = (
+                            rec.writing_time or 0.0
+                        ) + _PREDICT_INTERVAL / 60
+                    elif activity == "gaming":
+                        rec.gaming_time = (
+                            rec.gaming_time or 0.0
+                        ) + _PREDICT_INTERVAL / 60
+
+        except Exception as exc:
+            print(f"[predict_loop] {exc}")
+
+
+# Start background thread once when the blueprint is loaded
+_bg_thread = threading.Thread(target=_run_prediction_loop, daemon=True)
+_bg_thread.start()
 
 
 def _active_session(db):
@@ -162,12 +242,12 @@ def api_features_live():
 
 
 # ---------------------------------------------------------------------------
-# Live prediction  (ground truth for now — ML in Phase 2)
+# Live prediction  — served from cache written by background prediction loop
 # ---------------------------------------------------------------------------
 @dashboard.get("/api/predict/live")
 def api_predict_live():
     """
-    Returns the activity label of the active session as ground truth.
+    Returns the latest ML prediction for the active session.
 
     Response shape:
         {
@@ -176,30 +256,8 @@ def api_predict_live():
             "probabilities": { "coding": float, "writing": float, "gaming": float }
         }
     """
-    _null = {
-        "activity": None,
-        "confidence": None,
-        "probabilities": {"coding": None, "writing": None, "gaming": None},
-    }
-    try:
-        with get_session() as db:
-            sess = _active_session(db)
-            if sess is None:
-                return jsonify(_null)
-            activity = sess.activity.label.value if sess.activity else None
-
-        if activity is None:
-            return jsonify(_null)
-
-        probs = {"coding": 0.0, "writing": 0.0, "gaming": 0.0}
-        if activity in probs:
-            probs[activity] = 1.0
-
-        return jsonify(
-            {"activity": activity, "confidence": 1.0, "probabilities": probs}
-        )
-    except Exception as exc:
-        return jsonify({"error": str(exc)}), 500
+    with _pred_lock:
+        return jsonify(dict(_last_pred))
 
 
 # ---------------------------------------------------------------------------

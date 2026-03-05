@@ -12,6 +12,7 @@ from app.models.schema import (
     MouseEvent,
     RecordingSession,
     User,
+    _DB_URL,
     get_engine,
 )
 
@@ -38,8 +39,8 @@ class FeatureService:
         prediction = model.predict(df[FEATURE_NAMES])
     """
 
-    def __init__(self, db_url: str = "sqlite:///keysentinel.db"):
-        self._engine = get_engine(db_url)
+    def __init__(self, db_url: str | None = None):
+        self._engine = get_engine(db_url or _DB_URL)
 
     # ------------------------------------------------------------------
     # 1. Fetch raw events from DB
