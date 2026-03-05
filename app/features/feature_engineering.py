@@ -3,12 +3,19 @@
 import numpy as np
 
 GAMING_KEYS = {
+    # pynput char keys come as 'a' (with quotes) or plain a depending on the path
     "'a'",
+    "a",
     "'w'",
+    "w",
     "'s'",
+    "s",
     "'d'",
+    "d",
     "'z'",
+    "z",
     "'q'",
+    "q",
     "Key.up",
     "Key.down",
     "Key.left",
@@ -103,7 +110,11 @@ def extract_features(events: list[dict], window_size: float) -> dict[str, float]
     mean_flight = float(np.mean(flights) * 1000) if flights else 0.0
     std_flight = float(np.std(flights) * 1000) if len(flights) > 1 else 0.0
 
-    gaming_count = sum(1 for e in key_presses if e["key"].lower() in GAMING_KEYS)
+    gaming_count = sum(
+        1
+        for e in key_presses
+        if e["key"].lower().strip("'") in GAMING_KEYS or e["key"].lower() in GAMING_KEYS
+    )
     special_count = sum(1 for e in key_presses if e["key"] in SPECIAL_KEYS)
     gaming_key_ratio = gaming_count / total_keys if total_keys else 0.0
     special_key_ratio = special_count / total_keys if total_keys else 0.0

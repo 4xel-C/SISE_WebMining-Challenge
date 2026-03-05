@@ -8,7 +8,7 @@ if __name__ == "__main__":
     create_tables()
 
     # Initialize sergices to register events for user "axel" doing "work"
-    service = RegisterService(username="axel", activity_label="train")
+    service = RegisterService(username="axel", activity_label="coding")
 
     # start services
     service.start()
