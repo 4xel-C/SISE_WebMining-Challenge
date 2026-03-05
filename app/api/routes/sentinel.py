@@ -113,6 +113,9 @@ def sentinel_sessions():
             sessions = q.order_by(RecordingSession.started_at.desc()).all()
 
             result = []
+            # build user lookup once
+            user_map = {u.id: u.name for u in db.query(User).all()}
+
             for s in sessions:
                 kb_count = (
                     db.query(func.count(KeyboardEvent.id))
@@ -135,6 +138,7 @@ def sentinel_sessions():
                         "id": s.id,
                         "uuid": s.uuid,
                         "user_id": s.user_id,
+                        "user_name": user_map.get(s.user_id),
                         "activity": activity_label,
                         "started_at": s.started_at,
                         "ending_at": s.ending_at,

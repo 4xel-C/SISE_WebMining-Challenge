@@ -121,6 +121,31 @@
     </div>
   </div>
 
+  <!-- ── Sessions en base ──────────────────────────────────────────── -->
+  <div class="card p-4 mb-6">
+    <div class="flex items-center justify-between mb-3">
+      <div class="text-xs text-gray-500 uppercase tracking-widest">Sessions en base</div>
+      <span id="sessions-count" class="text-xs text-gray-600"></span>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-xs">
+        <thead>
+          <tr class="text-gray-500 border-b border-gray-700">
+            <th class="text-left pb-2 pr-4">Utilisateur</th>
+            <th class="text-left pb-2 pr-4">Activité</th>
+            <th class="text-left pb-2 pr-4">Début</th>
+            <th class="text-left pb-2 pr-4">Durée</th>
+            <th class="text-right pb-2 pr-4">⌨️ Touches</th>
+            <th class="text-right pb-2">🖱️ Souris</th>
+          </tr>
+        </thead>
+        <tbody id="sessions-tbody">
+          <tr><td colspan="6" class="text-gray-600 italic pt-2">Chargement…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
   <!-- ── Raw event feed ───────────────────────────────────────────── -->
   <div class="card p-4">
     <div class="flex items-center justify-between mb-3">
@@ -300,6 +325,58 @@
     }
 
     // ----------------------------------------------------------------
+    // Sessions en base
+    // ----------------------------------------------------------------
+    function fmtTs(ts) {
+      if (!ts) return '—';
+      return new Date(ts * 1000).toLocaleString('fr-FR', {
+        day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'
+      });
+    }
+
+    function fmtDuration(s) {
+      if (s == null) return '<span class="text-green-400 animate-pulse">● En cours</span>';
+      if (s < 60)   return `${Math.round(s)} s`;
+      if (s < 3600) return `${Math.floor(s/60)} min ${Math.round(s%60)} s`;
+      return `${Math.floor(s/3600)} h ${Math.floor((s%3600)/60)} min`;
+    }
+
+    const ACT_BADGE = {
+      coding:  'badge-coding',
+      writing: 'badge-writing',
+      gaming:  'badge-gaming',
+      train:   'bg-yellow-900 text-yellow-300 border border-yellow-700',
+    };
+
+    async function fetchSessions() {
+      const r = await fetch('/api/sentinel/sessions');
+      if (!r.ok) return;
+      const sessions = await r.json();
+      const tbody = document.getElementById('sessions-tbody');
+      document.getElementById('sessions-count').textContent =
+        `${sessions.length} session${sessions.length !== 1 ? 's' : ''}`;
+      if (!sessions.length) {
+        tbody.innerHTML = '<tr><td colspan="6" class="text-gray-600 italic pt-2">Aucune session en base.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = sessions.map(s => {
+        const active = s.ending_at == null;
+        const actCls = ACT_BADGE[s.activity] || 'badge-unknown';
+        const rowCls = active ? 'bg-green-950' : 'event-row';
+        return `<tr class="${rowCls}">
+          <td class="py-1 pr-4 font-semibold text-gray-300">${s.user_name || '—'}</td>
+          <td class="py-1 pr-4">
+            <span class="px-2 py-0.5 rounded-full text-xs font-bold ${actCls}">${s.activity || '?'}</span>
+          </td>
+          <td class="py-1 pr-4 text-gray-400">${fmtTs(s.started_at)}</td>
+          <td class="py-1 pr-4">${fmtDuration(s.duration_s)}</td>
+          <td class="py-1 pr-4 text-right text-blue-400">${s.keyboard_events.toLocaleString()}</td>
+          <td class="py-1 text-right text-purple-400">${s.mouse_events.toLocaleString()}</td>
+        </tr>`;
+      }).join('');
+    }
+
+    // ----------------------------------------------------------------
     // API calls  (routes implemented in dashboard.py)
     // ----------------------------------------------------------------
 
@@ -354,6 +431,7 @@
           fetchFeatures(),
           fetchPrediction(),
           fetchRecentEvents(),
+          fetchSessions(),
         ]);
         blink(true);
       } catch {
