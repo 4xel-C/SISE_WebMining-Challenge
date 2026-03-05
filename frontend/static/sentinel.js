@@ -815,5 +815,27 @@ function stopLive(keepUI = false) {
   }
 }
 
+// ── Auto-refresh (15s) ────────────────────────────────────────────
+const _AUTO_REFRESH_S = 5;
+
+function _autoRefresh() {
+  const active = ['users','sessions','metrics','replay'].find(t =>
+    !document.getElementById(`tab-${t}`)?.classList.contains('hidden')
+  );
+  if (!active) return;
+  const selectedOngoing = _selectedSessionId != null &&
+    document.querySelector(`.session-row[data-sid="${_selectedSessionId}"]`)?.dataset.ongoing === '1';
+  if (active === 'users') {
+    loadUsers();
+  } else if (active === 'sessions') {
+    reloadSessions();
+  } else if (active === 'metrics' && selectedOngoing) {
+    loadMetrics(_selectedSessionId);
+  } else if (active === 'replay' && selectedOngoing && !_PL.playing) {
+    loadReplay(_selectedSessionId);
+  }
+}
+
 // ── Init ──────────────────────────────────────────────────────────
 loadUsers();
+setInterval(_autoRefresh, _AUTO_REFRESH_S * 1000);
