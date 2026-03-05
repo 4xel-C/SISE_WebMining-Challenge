@@ -12,6 +12,12 @@ let _liveKbCounts      = {};   // key heatmap for live tab
 let _liveRecentPresses = [];  // {ts} for sliding-window WPM/KPS
 let _liveRecentMoves   = [];  // {ts, x, y} for mouse speed
 let _liveCharts        = null;
+let _liveMouseTrajPts  = [];   // {x,y} capped at 1500 for canvas drawing
+let _liveMouseClicks   = [];   // all {x,y,button} for session
+let _liveMousePos      = null;
+let _liveMouseBbox     = null; // {minX,maxX,minY,maxY} expanded dynamically
+let _liveMBtnCounts    = { left: 0, right: 0, scrollup: 0, scrolldown: 0 };
+let _liveMBtnTimers    = {};
 let _liveKbLastPress  = {};    // Date.now() of most recent press per key
 let _liveTotalKeys    = 0;
 let _liveTotalClicks  = 0;
@@ -822,6 +828,90 @@ function _pushLiveChartPoint(nowTs) {
   pushChart(_liveCharts.mouse, mouseSpeed);
 }
 
+// ── Live mouse canvas ──────────────────────────────────────────────
+function _drawLiveMouseCanvas() {
+  const canvas = document.getElementById('live-mouse-canvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#0d1117'; ctx.fillRect(0, 0, W, H);
+  if (!_liveMouseBbox || (!_liveMouseTrajPts.length && !_liveMouseClicks.length && !_liveMousePos)) {
+    ctx.fillStyle = '#6e7681'; ctx.font = '12px monospace'; ctx.textAlign = 'center';
+    ctx.fillText('En attente de mouvements…', W/2, H/2); return;
+  }
+  const pad = 20;
+  const { minX, maxX, minY, maxY } = _liveMouseBbox;
+  const norm = (x, y) => ({
+    cx: pad + ((x - minX) / ((maxX - minX) || 1)) * (W - 2*pad),
+    cy: pad + ((y - minY) / ((maxY - minY) || 1)) * (H - 2*pad),
+  });
+  if (_liveMouseTrajPts.length > 1) {
+    ctx.beginPath();
+    const p0 = norm(_liveMouseTrajPts[0].x, _liveMouseTrajPts[0].y); ctx.moveTo(p0.cx, p0.cy);
+    for (let i = 1; i < _liveMouseTrajPts.length; i++) {
+      const p = norm(_liveMouseTrajPts[i].x, _liveMouseTrajPts[i].y); ctx.lineTo(p.cx, p.cy);
+    }
+    ctx.strokeStyle = 'rgba(88,166,255,0.22)'; ctx.lineWidth = 1; ctx.stroke();
+  }
+  for (const c of _liveMouseClicks) {
+    const { cx, cy } = norm(c.x, c.y);
+    const col = (!c.button || c.button.toLowerCase().includes('left')) ? '#3fb950' : '#f85149';
+    ctx.beginPath(); ctx.arc(cx, cy, 4, 0, Math.PI*2); ctx.fillStyle = col+'cc'; ctx.fill();
+    ctx.beginPath(); ctx.arc(cx, cy, 7, 0, Math.PI*2); ctx.strokeStyle = col+'88'; ctx.lineWidth = 1; ctx.stroke();
+  }
+  if (_liveMousePos) {
+    const { cx, cy } = norm(_liveMousePos.x, _liveMousePos.y);
+    ctx.save();
+    ctx.fillStyle = '#bc8cff'; ctx.strokeStyle = '#0d1117'; ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(cx,    cy    ); ctx.lineTo(cx,    cy+14 ); ctx.lineTo(cx+4,  cy+10 );
+    ctx.lineTo(cx+7,  cy+16 ); ctx.lineTo(cx+9,  cy+15 ); ctx.lineTo(cx+6,  cy+9  );
+    ctx.lineTo(cx+11, cy+9  ); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.restore();
+    const posEl = document.getElementById('live-mouse-pos');
+    if (posEl) posEl.textContent = `${Math.round(_liveMousePos.x)}, ${Math.round(_liveMousePos.y)}`;
+  }
+}
+
+// ── Live mouse button indicator ────────────────────────────────────
+function _flashLiveBtn(id, activeBg, activeBorder) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (_liveMBtnTimers[id]) clearTimeout(_liveMBtnTimers[id]);
+  el.style.background  = activeBg;
+  el.style.borderColor = activeBorder;
+  _liveMBtnTimers[id] = setTimeout(() => {
+    el.style.background  = '#1c2130';
+    el.style.borderColor = '#374151';
+  }, 350);
+}
+
+function _updateLiveMBtns(mouseEvents) {
+  for (const e of mouseEvents) {
+    if (e.type === 'click') {
+      const isLeft = !e.button || e.button.toLowerCase().includes('left');
+      const key = isLeft ? 'left' : 'right';
+      _liveMBtnCounts[key]++;
+      set(`live-mbtn-${key}-cnt`, _liveMBtnCounts[key]);
+      _flashLiveBtn(`live-mbtn-${key}`,
+        isLeft ? '#14532d' : '#7f1d1d',
+        isLeft ? '#3fb950' : '#f85149');
+    } else if (e.type === 'scroll') {
+      const dy = e.scroll_dy ?? 0;
+      if (dy > 0) {
+        _liveMBtnCounts.scrollup++;
+        set('live-mbtn-scrollup-cnt', _liveMBtnCounts.scrollup);
+        _flashLiveBtn('live-mbtn-scrollup', '#14532d', '#3fb950');
+      } else if (dy < 0) {
+        _liveMBtnCounts.scrolldown++;
+        set('live-mbtn-scrolldown-cnt', _liveMBtnCounts.scrolldown);
+        _flashLiveBtn('live-mbtn-scrolldown', '#14532d', '#3fb950');
+      }
+    }
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════
 function openLive(sid) {
   stopLive();
@@ -835,6 +925,13 @@ function openLive(sid) {
   _liveStartedAt     = Date.now();
   _liveRecentPresses = [];
   _liveRecentMoves   = [];
+  _liveMouseTrajPts  = [];
+  _liveMouseClicks   = [];
+  _liveMousePos      = null;
+  _liveMouseBbox     = null;
+  _liveMBtnCounts    = { left: 0, right: 0, scrollup: 0, scrolldown: 0 };
+  Object.values(_liveMBtnTimers).forEach(t => clearTimeout(t));
+  _liveMBtnTimers    = {};
 
   set('live-session-label', `#${sid}`);
   set('live-stat-keys',     '0');
@@ -854,6 +951,10 @@ function openLive(sid) {
 
   // Build charts
   _initLiveCharts();
+
+  // Clear mouse canvas
+  const _mc = document.getElementById('live-mouse-canvas');
+  if (_mc) { const _mctx = _mc.getContext('2d'); _mctx.fillStyle = '#0d1117'; _mctx.fillRect(0, 0, _mc.width, _mc.height); }
 
   switchTab('live');
 
@@ -910,6 +1011,29 @@ async function _livePoll() {
       _liveKbLastPress[kid] = now;
     }
     _renderLiveKeyboard();
+
+    // Update mouse canvas
+    for (const e of data.mouse) {
+      if (e.x != null && e.y != null) {
+        if (!_liveMouseBbox) {
+          _liveMouseBbox = { minX: e.x, maxX: e.x, minY: e.y, maxY: e.y };
+        } else {
+          if (e.x < _liveMouseBbox.minX) _liveMouseBbox.minX = e.x;
+          if (e.x > _liveMouseBbox.maxX) _liveMouseBbox.maxX = e.x;
+          if (e.y < _liveMouseBbox.minY) _liveMouseBbox.minY = e.y;
+          if (e.y > _liveMouseBbox.maxY) _liveMouseBbox.maxY = e.y;
+        }
+        if (e.type !== 'scroll') _liveMousePos = { x: e.x, y: e.y };
+      }
+      if (e.type === 'move') {
+        _liveMouseTrajPts.push({ x: e.x, y: e.y });
+        if (_liveMouseTrajPts.length > 1500) _liveMouseTrajPts.shift();
+      } else if (e.type === 'click') {
+        _liveMouseClicks.push({ x: e.x, y: e.y, button: e.button });
+      }
+    }
+    _updateLiveMBtns(data.mouse);
+    _drawLiveMouseCanvas();
 
     // Update stats
     set('live-stat-keys',   _liveTotalKeys.toLocaleString());

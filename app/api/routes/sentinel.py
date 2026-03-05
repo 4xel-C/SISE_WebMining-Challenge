@@ -409,7 +409,7 @@ def sentinel_session_live(session_id: int):
                 db.query(MouseEvent)
                 .filter(
                     MouseEvent.recording_session_id == session_id,
-                    MouseEvent.event_type.in_(["click", "move"]),
+                    MouseEvent.event_type.in_(["click", "move", "scroll"]),
                     MouseEvent.timestamp > since,
                 )
                 .order_by(MouseEvent.timestamp)
@@ -438,6 +438,7 @@ def sentinel_session_live(session_id: int):
                     "x": e.x,
                     "y": e.y,
                     "button": e.button,
+                    "scroll_dy": e.scroll_dy,
                 }
                 for e in mouse_rows
             ]

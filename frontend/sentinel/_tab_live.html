@@ -74,7 +74,7 @@
       </div>
     </div>
 
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
 
       <!-- Event feed -->
       <div class="card p-4">
@@ -96,6 +96,68 @@
           <span class="w-5 h-3 rounded inline-block" style="background:#21262d;border:1px solid #30363d"></span>Inactif
           <span class="w-5 h-3 rounded inline-block ml-1" style="background:#1f3a60"></span>Faible
           <span class="w-5 h-3 rounded inline-block" style="background:#58a6ff"></span>Élevé
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Mouse row -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+
+      <!-- Mouse heatmap canvas -->
+      <div class="lg:col-span-2 card p-4">
+        <div class="text-xs text-gray-500 uppercase tracking-widest mb-3">🖱️ Heatmap souris</div>
+        <canvas id="live-mouse-canvas" width="640" height="280"
+                style="background:#0d1117;border-radius:6px;width:100%;display:block;margin:0 auto"></canvas>
+        <div class="mt-2 flex items-center gap-4 text-xs text-gray-600 justify-center">
+          <span><span class="inline-block w-2 h-2 rounded-full mr-1" style="background:#3fb950"></span>Clic gauche</span>
+          <span><span class="inline-block w-2 h-2 rounded-full mr-1" style="background:#f85149"></span>Clic droit</span>
+          <span style="color:rgba(88,166,255,.6)">── Trajectoire</span>
+        </div>
+      </div>
+
+      <!-- Mouse button indicator -->
+      <div class="card p-4 flex flex-col gap-4">
+        <div class="text-xs text-gray-500 uppercase tracking-widest">🖱️ Boutons souris</div>
+
+        <!-- Schematic -->
+        <div class="flex flex-col items-center">
+          <!-- Upper: L + scroll + R -->
+          <div class="flex" style="width:112px">
+            <div id="live-mbtn-left"
+                 class="flex flex-col items-center justify-center gap-1 py-5 rounded-tl-3xl transition-all duration-150"
+                 style="flex:1;background:#1c2130;border:1px solid #374151;border-right:none">
+              <div class="text-xs" style="color:#6e7681">L</div>
+              <div id="live-mbtn-left-cnt" class="text-base font-bold" style="color:#c9d1d9">0</div>
+            </div>
+            <!-- Scroll -->
+            <div class="flex flex-col items-center justify-center gap-1 px-1"
+                 style="background:#12182a;border-top:1px solid #374151">
+              <div id="live-mbtn-scrollup"
+                   class="flex items-center justify-center rounded-full text-xs transition-all duration-150"
+                   style="width:22px;height:22px;background:#1c2130;border:1px solid #374151;color:#6e7681">↑</div>
+              <div id="live-mbtn-scrolldown"
+                   class="flex items-center justify-center rounded-full text-xs transition-all duration-150"
+                   style="width:22px;height:22px;background:#1c2130;border:1px solid #374151;color:#6e7681">↓</div>
+            </div>
+            <div id="live-mbtn-right"
+                 class="flex flex-col items-center justify-center gap-1 py-5 rounded-tr-3xl transition-all duration-150"
+                 style="flex:1;background:#1c2130;border:1px solid #374151;border-left:none">
+              <div class="text-xs" style="color:#6e7681">R</div>
+              <div id="live-mbtn-right-cnt" class="text-base font-bold" style="color:#c9d1d9">0</div>
+            </div>
+          </div>
+          <!-- Body -->
+          <div class="rounded-b-full" style="width:112px;height:38px;background:#1c2130;border:1px solid #374151;border-top:none"></div>
+        </div>
+
+        <div class="text-center text-xs" style="color:#6b7280">
+          <span id="live-mbtn-scrollup-cnt" style="color:#9ca3af">0</span>↑
+          &nbsp;
+          <span id="live-mbtn-scrolldown-cnt" style="color:#9ca3af">0</span>↓
+        </div>
+        <div class="text-center text-xs" style="color:#6b7280">
+          Pos: <span id="live-mouse-pos" style="color:#9ca3af">—</span>
         </div>
       </div>
 
