@@ -823,13 +823,15 @@ function _autoRefresh() {
     !document.getElementById(`tab-${t}`)?.classList.contains('hidden')
   );
   if (!active) return;
+  const selectedOngoing = _selectedSessionId != null &&
+    document.querySelector(`.session-row[data-sid="${_selectedSessionId}"]`)?.dataset.ongoing === '1';
   if (active === 'users') {
     loadUsers();
   } else if (active === 'sessions') {
     reloadSessions();
-  } else if (active === 'metrics' && _selectedSessionId != null) {
+  } else if (active === 'metrics' && selectedOngoing) {
     loadMetrics(_selectedSessionId);
-  } else if (active === 'replay' && _selectedSessionId != null && !_PL.playing) {
+  } else if (active === 'replay' && selectedOngoing && !_PL.playing) {
     loadReplay(_selectedSessionId);
   }
 }
