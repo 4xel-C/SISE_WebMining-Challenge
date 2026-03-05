@@ -26,9 +26,18 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, rela
 # ---------------------------------------------------------------------------
 
 
+def _find_env_file() -> str | None:
+    """Locate .env next to the executable (frozen) or in the project root (dev)."""
+    if getattr(__import__("sys"), "frozen", False):
+        import sys
+
+        return os.path.join(os.path.dirname(sys.executable), ".env")
+    return None  # let load_dotenv() search upward from cwd
+
+
 def get_db_url() -> str:
     """Return the database URL from .env (PostgreSQL) or fall back to SQLite."""
-    load_dotenv()
+    load_dotenv(dotenv_path=_find_env_file())
     _user = os.getenv("DB_USER")
     _password = os.getenv("DB_PASSWORD")
     _host = os.getenv("DB_HOST")
