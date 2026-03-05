@@ -13,6 +13,7 @@ from flask import Flask, render_template, send_from_directory
 
 from app.api.routes import agent, dashboard
 from app.api.routes.sentinel import sentinel_bp
+from app.services import ml_service
 
 FRONTEND_DIR = Path(__file__).parent.parent.parent / "frontend"
 STATIC_DIR = FRONTEND_DIR / "static"
@@ -29,6 +30,7 @@ def create_app() -> Flask:
     app.register_blueprint(dashboard)  # GET  — frontend visualisation
     app.register_blueprint(agent)  # POST — local capture agent only
     app.register_blueprint(sentinel_bp)  # GET  — sentinel DB viewer
+    ml_service.load_model()
 
     # ── Serve frontend ────────────────────────────────────────────
     @app.get("/")
