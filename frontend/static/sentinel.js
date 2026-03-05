@@ -16,13 +16,14 @@ let _liveMouseTrajPts  = [];   // {x,y} capped at 1500 for canvas drawing
 let _liveMouseClicks   = [];   // all {x,y,button} for session
 let _liveMousePos      = null;
 let _liveMouseBbox     = null; // {minX,maxX,minY,maxY} expanded dynamically
-let _liveMBtnCounts    = { left: 0, right: 0, scrollup: 0, scrolldown: 0 };
+let _liveMBtnCounts    = { left: 0, right: 0, middle: 0, scrollup: 0, scrolldown: 0 };
 let _liveMBtnTimers    = {};
 let _liveKbLastPress  = {};    // Date.now() of most recent press per key
 let _liveTotalKeys    = 0;
 let _liveTotalClicks  = 0;
 let _liveTotalMoves   = 0;
 let _liveStartedAt    = null;
+let _pollInFlight     = false; // prevents concurrent _livePoll calls
 
 // ── Users charts state ─────────────────────────────────────────────
 let _usersCharts       = null;   // { sessions, time, donut, gantt canvas }
@@ -862,7 +863,8 @@ function _drawMouseCanvas() {
   }
   for (const c of _allClicks) {
     const { cx, cy } = norm(c.x, c.y);
-    const col = (!c.button || c.button.includes('left')) ? '#3fb950' : '#f85149';
+    const btn = (c.button || '').toLowerCase();
+    const col = !btn || btn.includes('left') ? '#3fb950' : btn.includes('middle') ? '#f0883e' : '#f85149';
     ctx.beginPath(); ctx.arc(cx, cy, 4, 0, Math.PI*2); ctx.fillStyle = col+'cc'; ctx.fill();
     ctx.beginPath(); ctx.arc(cx, cy, 7, 0, Math.PI*2); ctx.strokeStyle = col+'88'; ctx.lineWidth=1; ctx.stroke();
   }
@@ -1257,7 +1259,8 @@ function _drawLiveMouseCanvas() {
   }
   for (const c of _liveMouseClicks) {
     const { cx, cy } = norm(c.x, c.y);
-    const col = (!c.button || c.button.toLowerCase().includes('left')) ? '#3fb950' : '#f85149';
+    const btn2 = (c.button || '').toLowerCase();
+    const col = !btn2 || btn2.includes('left') ? '#3fb950' : btn2.includes('middle') ? '#f0883e' : '#f85149';
     ctx.beginPath(); ctx.arc(cx, cy, 4, 0, Math.PI*2); ctx.fillStyle = col+'cc'; ctx.fill();
     ctx.beginPath(); ctx.arc(cx, cy, 7, 0, Math.PI*2); ctx.strokeStyle = col+'88'; ctx.lineWidth = 1; ctx.stroke();
   }
@@ -1290,14 +1293,22 @@ function _flashLiveBtn(id, activeBg, activeBorder) {
 
 function _updateLiveMBtns(mouseEvents) {
   for (const e of mouseEvents) {
-    if (e.type === 'click') {
-      const isLeft = !e.button || e.button.toLowerCase().includes('left');
-      const key = isLeft ? 'left' : 'right';
+    if (e.type === 'click' && e.pressed !== false) {
+      const btn = (e.button || '').toLowerCase();
+      const isLeft   = !btn || btn.includes('left');
+      const isMiddle = btn.includes('middle');
+      const key = isLeft ? 'left' : isMiddle ? 'middle' : 'right';
       _liveMBtnCounts[key]++;
-      set(`live-mbtn-${key}-cnt`, _liveMBtnCounts[key]);
-      _flashLiveBtn(`live-mbtn-${key}`,
-        isLeft ? '#14532d' : '#7f1d1d',
-        isLeft ? '#3fb950' : '#f85149');
+      if (key === 'middle') {
+        set('live-mbtn-middle-cnt',   _liveMBtnCounts.middle);
+        set('live-mbtn-middle-total', _liveMBtnCounts.middle);
+        _flashLiveBtn('live-mbtn-middle', '#713f12', '#f0883e');
+      } else {
+        set(`live-mbtn-${key}-cnt`, _liveMBtnCounts[key]);
+        _flashLiveBtn(`live-mbtn-${key}`,
+          isLeft ? '#14532d' : '#7f1d1d',
+          isLeft ? '#3fb950' : '#f85149');
+      }
     } else if (e.type === 'scroll') {
       const dy = e.scroll_dy ?? 0;
       if (dy > 0) {
@@ -1330,9 +1341,10 @@ function openLive(sid) {
   _liveMouseClicks   = [];
   _liveMousePos      = null;
   _liveMouseBbox     = null;
-  _liveMBtnCounts    = { left: 0, right: 0, scrollup: 0, scrolldown: 0 };
+  _liveMBtnCounts    = { left: 0, right: 0, middle: 0, scrollup: 0, scrolldown: 0 };
   Object.values(_liveMBtnTimers).forEach(t => clearTimeout(t));
   _liveMBtnTimers    = {};
+  _pollInFlight      = false;
 
   set('live-session-label', `#${sid}`);
   set('live-stat-keys',     '0');
@@ -1373,7 +1385,8 @@ function openLive(sid) {
 }
 
 async function _livePoll() {
-  if (!_liveSessionId) return;
+  if (!_liveSessionId || _pollInFlight) return;
+  _pollInFlight = true;
   try {
     const res  = await fetch(`/api/sentinel/session/${_liveSessionId}/live?since=${_liveSince}`);
     const data = await res.json();
@@ -1401,7 +1414,7 @@ async function _livePoll() {
     // Accumulate counts
     const presses = data.keyboard.filter(e => e.type === 'key_press');
     _liveTotalKeys   += presses.length;
-    _liveTotalClicks += data.mouse.filter(e => e.type === 'click').length;
+    _liveTotalClicks += data.mouse.filter(e => e.type === 'click' && e.pressed !== false).length;
     _liveTotalMoves  += data.mouse.filter(e => e.type === 'move').length;
 
     // Update keyboard heatmap
@@ -1429,7 +1442,7 @@ async function _livePoll() {
       if (e.type === 'move') {
         _liveMouseTrajPts.push({ x: e.x, y: e.y });
         if (_liveMouseTrajPts.length > 1500) _liveMouseTrajPts.shift();
-      } else if (e.type === 'click') {
+      } else if (e.type === 'click' && e.pressed !== false) {
         _liveMouseClicks.push({ x: e.x, y: e.y, button: e.button });
       }
     }
@@ -1453,7 +1466,7 @@ async function _livePoll() {
         ts: e.ts, time: e.time,
         device: 'keyboard', etype: e.type, detail: e.key,
       })),
-      ...data.mouse.filter(e => e.type !== 'move').map(e => ({
+      ...data.mouse.filter(e => e.type !== 'move' && (e.type !== 'click' || e.pressed !== false)).map(e => ({
         ts: e.ts, time: new Date(e.ts * 1000).toLocaleTimeString('fr-FR'),
         device: 'mouse', etype: e.type,
         detail: e.type === 'click' ? `${e.button || ''} (${e.x},${e.y})` : `dy=${e.dy} (${e.x},${e.y})`,
@@ -1462,7 +1475,9 @@ async function _livePoll() {
 
     if (newEvents.length) _appendLiveFeed(newEvents);
 
-  } catch (_) {}
+  } catch (_) {} finally {
+    _pollInFlight = false;
+  }
 }
 
 function _appendLiveFeed(events) {
@@ -1648,6 +1663,45 @@ async function _patchSessions() {
   } catch (_) {}
 }
 
+// Silent background patch for Replay tab — extends event buffer without interrupting playback
+async function _patchReplay(sid) {
+  if (!_RP || _replayLoadedFor !== sid) { loadReplay(sid); return; }
+  try {
+    const res  = await fetch(`/api/sentinel/session/${sid}/events`);
+    const data = await res.json();
+    if (data.error) return;
+
+    const newEvents = [];
+    for (const e of (data.keyboard || [])) newEvents.push({ t: e.ts_offset, k: e.type, key: e.key });
+    for (const e of (data.mouse    || [])) newEvents.push({ t: e.ts_offset, k: e.type, x: e.x, y: e.y, button: e.button });
+    newEvents.sort((a, b) => a.t - b.t);
+
+    if (newEvents.length <= _RP.events.length) return; // nothing new
+
+    const newDur = data.duration ?? (newEvents.length ? newEvents[newEvents.length - 1].t : _RP.duration);
+    const wasAtEnd = _PL.playhead >= _RP.duration - 0.1; // playhead was at the very end
+    const oldDur   = _RP.duration;
+
+    _RP.events     = newEvents;
+    _RP.duration   = Math.max(newDur, 0.1);
+    _RP.timeSeries = _computeReplayTimeSeries(newEvents, _RP.duration);
+
+    // Extend scrubber range without moving playhead
+    const scrubber = document.getElementById('replay-progress');
+    if (scrubber) scrubber.max = _RP.duration.toFixed(2);
+
+    _updateReplayCharts(_PL.playhead);
+
+    // If playhead was parked at the old end and new data arrived, resume playback
+    if (wasAtEnd && _RP.duration > oldDur + 0.05 && !_PL.playing) {
+      _PL.playing  = true;
+      _PL.lastWall = performance.now();
+      _PL.rafId    = requestAnimationFrame(_tick);
+      _updatePlayBtn();
+    }
+  } catch (_) {}
+}
+
 // Silent patch for Metrics tab — just overwrite text nodes, no visibility change
 async function _patchMetrics(sid) {
   try {
@@ -1671,8 +1725,8 @@ function _autoRefresh() {
     _patchSessions();
   } else if (active === 'metrics' && selectedOngoing) {
     _patchMetrics(_selectedSessionId);
-  } else if (active === 'replay' && selectedOngoing && !_PL.playing) {
-    loadReplay(_selectedSessionId);
+  } else if (active === 'replay') {
+    if (_selectedSessionId != null) _patchReplay(_selectedSessionId);
   }
 }
 
