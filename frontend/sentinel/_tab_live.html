@@ -1,0 +1,72 @@
+<!-- ── Tab: Live ────────────────────────────────────────────────── -->
+<section id="tab-live" class="tab-panel hidden">
+  <div class="flex items-center justify-between mb-4">
+    <div class="flex items-center gap-3">
+      <h2 class="text-sm text-gray-500 uppercase tracking-widest">Live</h2>
+      <span id="live-session-label" class="text-xs text-green-400"></span>
+      <span id="live-activity-badge"></span>
+      <span id="live-pulse" class="hidden inline-flex items-center gap-1 text-xs text-green-400">
+        <span class="inline-block w-2 h-2 rounded-full bg-green-400 animate-pulse"></span>En cours
+      </span>
+      <span id="live-ended-badge" class="hidden text-xs text-gray-500">Session terminée</span>
+    </div>
+    <div class="flex items-center gap-2 text-xs text-gray-600">
+      <span id="live-event-count">0 événements</span>
+      <button onclick="stopLive()" class="hover:text-red-400 transition-colors">⏹ Arrêter</button>
+    </div>
+  </div>
+
+  <div id="live-stopped" class="text-gray-600 text-sm italic">
+    Cliquer sur "Live →" dans l'onglet Sessions pour démarrer le suivi en direct.
+  </div>
+
+  <div id="live-container" class="hidden">
+
+    <!-- Stats row -->
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+      <div class="card p-3 flex flex-col items-center gap-1">
+        <div class="text-xs text-gray-500 uppercase tracking-widest">Frappes</div>
+        <div id="live-stat-keys" class="text-2xl font-bold text-blue-400">0</div>
+      </div>
+      <div class="card p-3 flex flex-col items-center gap-1">
+        <div class="text-xs text-gray-500 uppercase tracking-widest">Clics</div>
+        <div id="live-stat-clicks" class="text-2xl font-bold text-purple-400">0</div>
+      </div>
+      <div class="card p-3 flex flex-col items-center gap-1">
+        <div class="text-xs text-gray-500 uppercase tracking-widest">Mouvements</div>
+        <div id="live-stat-moves" class="text-2xl font-bold text-teal-400">0</div>
+      </div>
+      <div class="card p-3 flex flex-col items-center gap-1">
+        <div class="text-xs text-gray-500 uppercase tracking-widest">Durée</div>
+        <div id="live-stat-duration" class="text-2xl font-bold text-gray-300">0s</div>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+      <!-- Event feed -->
+      <div class="card p-4">
+        <div class="flex items-center justify-between mb-3">
+          <div class="text-xs text-gray-500 uppercase tracking-widest">Flux d'événements</div>
+          <button onclick="clearLiveFeed()" class="text-xs text-gray-600 hover:text-gray-400 transition-colors">Vider</button>
+        </div>
+        <div id="live-feed"
+             class="text-xs h-72 overflow-y-auto flex flex-col-reverse gap-0.5 pr-1">
+          <div class="text-gray-600 italic">En attente d'événements…</div>
+        </div>
+      </div>
+
+      <!-- Keyboard heatmap -->
+      <div class="card p-4">
+        <div class="text-xs text-gray-500 uppercase tracking-widest mb-3">⌨️ Heatmap clavier</div>
+        <div id="live-kb-container" class="overflow-x-auto"></div>
+        <div class="mt-2 flex items-center gap-3 text-xs text-gray-600">
+          <span class="w-5 h-3 rounded inline-block" style="background:#21262d;border:1px solid #30363d"></span>Inactif
+          <span class="w-5 h-3 rounded inline-block ml-1" style="background:#1f3a60"></span>Faible
+          <span class="w-5 h-3 rounded inline-block" style="background:#58a6ff"></span>Élevé
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>

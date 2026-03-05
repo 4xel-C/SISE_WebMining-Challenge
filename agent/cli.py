@@ -70,8 +70,11 @@ def main() -> None:
         stop_event.wait()
     except KeyboardInterrupt:
         pass
+    finally:
+        # 7) Arrêter proprement — ignoré les Ctrl+C supplémentaires pendant le flush
+        import signal
 
-    # 7) Arrêter proprement
-    stop_listener.stop()
-    service.stop()
-    print("[agent] Session terminée.")
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        stop_listener.stop()
+        service.stop()
+        print("[agent] Session terminée.")

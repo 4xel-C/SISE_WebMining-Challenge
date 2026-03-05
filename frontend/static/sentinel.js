@@ -1,17 +1,25 @@
 // ── KeySentinel — Sentinel mode JS ──────────────────────────────────
 
 // ── State ──────────────────────────────────────────────────────────
-let _selectedUserId   = null;
+ let _selectedUserId   = null;
 let _selectedUserName = null;
 let _selectedSessionId = null;
 let _replayLoadedFor  = null;
+let _liveSessionId    = null;  // session currently watched live
+let _liveSince        = 0;     // timestamp cursor for incremental fetch
+let _liveTimer        = null;  // setInterval handle
+let _liveKbCounts     = {};    // key heatmap for live tab
+let _liveTotalKeys    = 0;
+let _liveTotalClicks  = 0;
+let _liveTotalMoves   = 0;
+let _liveStartedAt    = null;
 
 // ── Tab helpers ────────────────────────────────────────────────────
 function switchTab(name) {
-  ['users', 'sessions', 'metrics', 'replay'].forEach(t => {
-    document.getElementById(`tab-${t}`).classList.toggle('hidden', t !== name);
+  ['users', 'sessions', 'metrics', 'replay', 'live'].forEach(t => {
+    document.getElementById(`tab-${t}`)?.classList.toggle('hidden', t !== name);
     const btn = document.getElementById(`tab-${t}-btn`);
-    btn.classList.toggle('active', t === name);
+    if (btn) btn.classList.toggle('active', t === name);
   });
   if (name === 'replay' && _selectedSessionId !== null && _replayLoadedFor !== _selectedSessionId) {
     loadReplay(_selectedSessionId);
@@ -107,8 +115,26 @@ function selectUser(uid, uname) {
   document.querySelectorAll('.user-row').forEach(r => {
     r.classList.toggle('selected', parseInt(r.dataset.uid) === uid);
   });
+  // Show live banner if this user has an ongoing session
+  _checkUserLiveBanner(uid);
   loadSessions(uid, uname);
   switchTab('sessions');
+}
+
+async function _checkUserLiveBanner(uid) {
+  hide('users-live-banner');
+  if (!uid) return;
+  try {
+    const res  = await fetch(`/api/sentinel/sessions?user_id=${uid}`);
+    const data = await res.json();
+    const live = data.find(s => s.ending_at == null);
+    if (!live) return;
+    show('users-live-banner');
+    document.getElementById('users-live-activity').innerHTML = activityBadge(live.activity);
+    document.getElementById('users-live-since').textContent  = 'depuis ' + fmtTs(live.started_at);
+    const btn = document.getElementById('users-live-btn');
+    btn.onclick = () => openLive(live.id);
+  } catch (_) {}
 }
 
 // ── Sessions tab ───────────────────────────────────────────────────
@@ -145,27 +171,38 @@ function renderSessions(sessions) {
   const tbody = document.getElementById('sessions-tbody');
   tbody.innerHTML = '';
   sessions.forEach(s => {
+    const ongoing = s.ending_at == null;
     const tr = document.createElement('tr');
-    tr.className = 'session-row border-b border-gray-800/50' + (s.id === _selectedSessionId ? ' selected' : '');
+    tr.className = 'session-row border-b border-gray-800/50' +
+      (s.id === _selectedSessionId ? ' selected' : '') +
+      (ongoing ? ' bg-green-950/20' : '');
     tr.dataset.sid = s.id;
+
+    const durationCell = ongoing
+      ? '<span class="inline-flex items-center gap-1 text-xs text-green-400"><span class="inline-block w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"></span>En cours</span>'
+      : fmtDuration(s.duration_s);
+
+    const actionCell = ongoing
+      ? `<div class="flex gap-3 justify-end">
+           <button class="text-xs text-purple-400 hover:text-purple-300"
+                   onclick="event.stopPropagation();selectSession(${s.id})">Métriques →</button>
+           <button class="text-xs text-green-400 hover:text-green-300 font-semibold"
+                   onclick="event.stopPropagation();openLive(${s.id})">&#128994; Live →</button>
+         </div>`
+      : `<div class="flex gap-3 justify-end">
+           <button class="text-xs text-purple-400 hover:text-purple-300"
+                   onclick="event.stopPropagation();selectSession(${s.id})">Métriques →</button>
+           <button class="text-xs text-blue-400 hover:text-blue-300"
+                   onclick="event.stopPropagation();openReplay(${s.id})">Replay →</button>
+         </div>`;
+
     tr.innerHTML = `
       <td class="px-4 py-3 text-xs text-gray-400">${fmtTs(s.started_at)}</td>
       <td class="px-4 py-3">${activityBadge(s.activity)}</td>
-      <td class="px-4 py-3 text-right text-gray-300">${fmtDuration(s.duration_s)}</td>
+      <td class="px-4 py-3 text-right text-gray-300">${durationCell}</td>
       <td class="px-4 py-3 text-right text-gray-400">${s.keyboard_events.toLocaleString()}</td>
       <td class="px-4 py-3 text-right text-gray-400">${s.mouse_events.toLocaleString()}</td>
-      <td class="px-4 py-3 text-right">
-        <div class="flex gap-3 justify-end">
-          <button class="text-xs text-purple-400 hover:text-purple-300"
-                  onclick="event.stopPropagation();selectSession(${s.id})">
-            Métriques →
-          </button>
-          <button class="text-xs text-blue-400 hover:text-blue-300"
-                  onclick="event.stopPropagation();openReplay(${s.id})">
-            Replay →
-          </button>
-        </div>
-      </td>`;
+      <td class="px-4 py-3 text-right">${actionCell}</td>`;
     tr.onclick = () => selectSession(s.id);
     tbody.appendChild(tr);
   });
@@ -582,6 +619,173 @@ function openReplay(sid) {
     r.classList.toggle('selected', parseInt(r.dataset.sid) === sid)
   );
   switchTab('replay');
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// LIVE ENGINE
+// ═══════════════════════════════════════════════════════════════════
+
+const _LIVE_FEED_MAX = 120;
+
+const _LIVE_FEED_COLORS = {
+  key_press:   'text-blue-400',
+  key_release: 'text-gray-600',
+  click:       'text-purple-400',
+  move:        'text-gray-700',
+};
+
+function openLive(sid) {
+  stopLive();
+  _liveSessionId   = sid;
+  _liveSince       = 0;
+  _liveKbCounts    = {};
+  _liveTotalKeys   = 0;
+  _liveTotalClicks = 0;
+  _liveTotalMoves  = 0;
+  _liveStartedAt   = Date.now();
+
+  set('live-session-label', `#${sid}`);
+  set('live-stat-keys',     '0');
+  set('live-stat-clicks',   '0');
+  set('live-stat-moves',    '0');
+  set('live-stat-duration', '0s');
+  document.getElementById('live-feed').innerHTML =
+    '<div class="text-gray-600 italic">En attente d\'événements…</div>';
+  hide('live-stopped'); show('live-container');
+  hide('live-ended-badge'); show('live-pulse');
+
+  // Show Live tab button
+  document.getElementById('tab-live-btn')?.classList.remove('hidden');
+
+  // Build keyboard heatmap
+  _buildKeyboardDOM('live-kb-container');
+
+  switchTab('live');
+
+  // Fetch activity label for badge
+  fetch(`/api/sentinel/sessions?user_id=`)
+    .catch(() => {});
+  fetch(`/api/sentinel/session/${sid}/stats`)
+    .then(r => r.json())
+    .then(d => {
+      document.getElementById('live-activity-badge').innerHTML = activityBadge(d.activity || null);
+    }).catch(() => {});
+
+  _liveTimer = setInterval(_livePoll, 1000);
+  _livePoll();
+}
+
+async function _livePoll() {
+  if (!_liveSessionId) return;
+  try {
+    const res  = await fetch(`/api/sentinel/session/${_liveSessionId}/live?since=${_liveSince}`);
+    const data = await res.json();
+    if (data.error) return;
+
+    _liveSince = data.since;
+
+    // Update ongoing state
+    if (!data.ongoing) {
+      hide('live-pulse');
+      show('live-ended-badge');
+      stopLive(/* keepUI */ true);
+    }
+
+    // Accumulate counts
+    const presses = data.keyboard.filter(e => e.type === 'key_press');
+    _liveTotalKeys   += presses.length;
+    _liveTotalClicks += data.mouse.filter(e => e.type === 'click').length;
+    _liveTotalMoves  += data.mouse.filter(e => e.type === 'move').length;
+
+    // Update keyboard heatmap
+    for (const e of presses) {
+      const kid = _parseKeyId(e.key);
+      _liveKbCounts[kid] = (_liveKbCounts[kid] || 0) + 1;
+    }
+    _renderLiveKeyboard();
+
+    // Update stats
+    set('live-stat-keys',   _liveTotalKeys.toLocaleString());
+    set('live-stat-clicks', _liveTotalClicks.toLocaleString());
+    set('live-stat-moves',  _liveTotalMoves.toLocaleString());
+
+    const elapsed = Math.round((Date.now() - _liveStartedAt) / 1000);
+    set('live-stat-duration', fmtDuration(elapsed));
+
+    const total = _liveTotalKeys + _liveTotalClicks + _liveTotalMoves;
+    set('live-event-count', `${total.toLocaleString()} événements`);
+
+    // Append to feed
+    const newEvents = [
+      ...data.keyboard.map(e => ({
+        ts: e.ts, time: e.time,
+        device: 'keyboard', etype: e.type, detail: e.key,
+      })),
+      ...data.mouse.filter(e => e.type !== 'move').map(e => ({
+        ts: e.ts, time: new Date(e.ts * 1000).toLocaleTimeString('fr-FR'),
+        device: 'mouse', etype: e.type,
+        detail: e.type === 'click' ? `${e.button || ''} (${e.x},${e.y})` : `dy=${e.dy} (${e.x},${e.y})`,
+      })),
+    ].sort((a, b) => a.ts - b.ts);
+
+    if (newEvents.length) _appendLiveFeed(newEvents);
+
+  } catch (_) {}
+}
+
+function _appendLiveFeed(events) {
+  const feed = document.getElementById('live-feed');
+  const placeholder = feed.querySelector('.italic');
+  if (placeholder) placeholder.remove();
+
+  const ICONS = { keyboard: '⌨️', mouse: '🖱️' };
+  for (const ev of events) {
+    const div = document.createElement('div');
+    const color = _LIVE_FEED_COLORS[ev.etype] || 'text-gray-400';
+    div.className = `flex gap-2 py-0.5 px-1 rounded ${color}`;
+    div.innerHTML =
+      `<span class="text-gray-600 w-20 shrink-0">${ev.time}</span>` +
+      `<span class="w-4">${ICONS[ev.device] || '📡'}</span>` +
+      `<span class="w-20 shrink-0">${ev.etype}</span>` +
+      `<span class="text-gray-400">${esc(ev.detail || '')}</span>`;
+    feed.prepend(div);
+  }
+  while (feed.children.length > _LIVE_FEED_MAX) feed.lastChild.remove();
+}
+
+function _renderLiveKeyboard() {
+  const container = document.getElementById('live-kb-container');
+  if (!container) return;
+  const max = Math.max(1, ...Object.values(_liveKbCounts));
+  container.querySelectorAll('.kb-key').forEach(el => {
+    const kid = el.dataset.kid, count = _liveKbCounts[kid] || 0;
+    const heat = count / max;
+    const cntEl = el.querySelector('.kb-cnt');
+    if (cntEl) cntEl.textContent = count > 0 ? (count > 9999 ? Math.round(count/1000)+'k' : count) : '';
+    if (count > 0) {
+      const r = Math.round(13+heat*75), g = Math.round(42+heat*124), b = Math.round(95+heat*160);
+      el.style.background = `rgb(${r},${g},${b})`; el.style.color = heat>.6?'#0d1117':'#c9d1d9';
+      el.style.borderColor = `rgb(${r},${g},${b})`; el.style.boxShadow = 'none';
+    } else {
+      el.style.background = '#21262d'; el.style.color = '#484f58';
+      el.style.borderColor = '#30363d'; el.style.boxShadow = 'none';
+    }
+  });
+}
+
+function clearLiveFeed() {
+  document.getElementById('live-feed').innerHTML =
+    '<div class="text-gray-600 italic">Vidé.</div>';
+}
+
+function stopLive(keepUI = false) {
+  if (_liveTimer) { clearInterval(_liveTimer); _liveTimer = null; }
+  if (!keepUI) {
+    _liveSessionId = null;
+    hide('live-container'); show('live-stopped');
+    document.getElementById('tab-live-btn')?.classList.add('hidden');
+    switchTab('sessions');
+  }
 }
 
 // ── Init ──────────────────────────────────────────────────────────

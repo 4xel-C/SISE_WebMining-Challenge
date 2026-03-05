@@ -14,7 +14,8 @@ import webbrowser
 import pystray
 from PIL import Image, ImageDraw
 
-from .. import buffer, client, listeners, session
+from .. import client
+from app.services import RegisterService
 from .home import ask_profile
 
 # ── Constants ─────────────────────────────────────────────────────────────────
@@ -73,9 +74,7 @@ class TrayApp:
         self._recording = False
         self._server_ok = False
 
-        self._stop_event: threading.Event | None = None
-        self._mouse_l = None
-        self._kb_l = None
+        self._service: RegisterService | None = None
 
         self._icon: pystray.Icon | None = None
 
@@ -134,7 +133,7 @@ class TrayApp:
             pystray.MenuItem(f"👤  {self._user}", self._ask_user),
             activity_item,
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem("▶  Démarrer", self._on_start, enabled=self._server_ok),
+            pystray.MenuItem("▶  Démarrer", self._on_start),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(server_label, None, enabled=False),
             pystray.MenuItem("🌐  Ouvrir le dashboard", self._open_dashboard),
@@ -185,55 +184,21 @@ class TrayApp:
         """Menu → Démarrer."""
         if self._recording:
             return
-        if not client.check_server():
-            self._server_ok = False
-            self._notify("Serveur inaccessible", "Lance run_server.py d'abord.")
-            self._refresh()
-            return
 
+        _activity = self._activity if self._labelled else "coding"
+        self._service = RegisterService(username=self._user, activity_label=_activity)
+        self._service.start()
         self._recording = True
-        self._stop_event = threading.Event()
         self._refresh()
 
-        # Open session (activity=None when ML-only mode)
-        _activity = self._activity if self._labelled else None
-        session.start(self._user, _activity, client.post)
-
-        # Flush thread
-        threading.Thread(
-            target=buffer.flush_loop,
-            args=(session.get_id, client.post, self._stop_event),
-            daemon=True,
-        ).start()
-
-        # Listeners
-        self._mouse_l = listeners.make_mouse_listener(buffer.push, self._do_stop)
-        self._kb_l = listeners.make_keyboard_listener(
-            buffer.push, self._do_stop, self._stop_event
-        )
-        self._mouse_l.start()
-        self._kb_l.start()
-
     def _do_stop(self) -> None:
-        """Core stop logic — called from END key, menu, or quit."""
+        """Core stop logic — called from menu or quit."""
         if not self._recording:
             return
-        if self._stop_event and self._stop_event.is_set():
-            return
-        if self._stop_event:
-            self._stop_event.set()
-
-        # Stop listeners cleanly
-        if self._mouse_l:
-            self._mouse_l.stop()
-        if self._kb_l:
-            self._kb_l.stop()
-
-        session.stop(
-            post_fn=client.post,
-            flush_fn=lambda: buffer.flush(session.get_id(), client.post),
-        )
         self._recording = False
+        if self._service:
+            self._service.stop()
+            self._service = None
         self._refresh()
 
     def _on_stop(self, icon, item) -> None:
