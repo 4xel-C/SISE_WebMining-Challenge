@@ -52,10 +52,10 @@ def _convert(store_events: list[dict]) -> list[dict]:
                 _last_move = {"x": x, "y": y, "ts": ts}
                 out.append({"type": "move", "time": ts, "speed": speed})
 
-        elif etype == "click":
-                    out.append({"type": "click", "time": ts})
-        elif etype == "scroll":
-                    out.append({"type": "scroll", "time": ts})
+            elif etype == "click":
+                        out.append({"type": "click", "time": ts})
+            elif etype == "scroll":
+                        out.append({"type": "scroll", "time": ts})
 
     return out
 
