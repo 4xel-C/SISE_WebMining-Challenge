@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "pynput>=1.7.7",
-    "numpy>=2.0.0",
+    "numpy>=2.4.2",
     "scikit-learn>=1.5.0",
     "rich>=13.7.0",
     "textual>=0.68.0",
